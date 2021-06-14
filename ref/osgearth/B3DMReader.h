@@ -80,6 +80,7 @@ public:
     //! Read a B3DM data package and return a node.
     osg::Node* read(const std::string& location, const std::string& inputStream, const osgDB::Options* readOptions) const
     {
+#if 0
         // Check the header's magic string. If it's not there, attempt
         // to run a decompressor on it
 
@@ -228,6 +229,8 @@ public:
             mt->addChild(modelNode);
             return mt;
         }
+#endif
+	return 0;
     }
 };
 

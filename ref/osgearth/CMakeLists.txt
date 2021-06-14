@@ -1,3 +1,8 @@
+set(CMAKE_MODULE_PATH "${PROJECT_SOURCE_DIR}/ref/osgearth")
+
+find_package(OsgEarth REQUIRED)
+
+if(${OSGEARTH_FOUND})
 add_library(osgdb_gltf SHARED
 	"ReaderWriterGLTF.cpp"
 	"GLTFReader.h"
@@ -6,7 +11,12 @@ add_library(osgdb_gltf SHARED
 	"B3DMWriter.h"
 )
 
-target_link_libraries(osgdb_gltf PRIVATE ${OPENSCENEGRAPH_LIBRARIES})
+target_link_libraries(osgdb_gltf PRIVATE
+	${OPENSCENEGRAPH_LIBRARIES}
+	${OSGEARTH_LIBRARY}
+	# ${OSGEARTHUTIL_LIBRARY}
+)
+
 target_include_directories(osgdb_gltf PRIVATE
 	${OPENSCENEGRAPH_INCLUDE_DIRS}
 	# "${PROJECT_SOURCE_DIR}/ext/tinygltf"
@@ -24,4 +34,5 @@ if(WIN32)
 
 else(WIN32)
 	target_compile_options(osgdb_gltf PRIVATE -W -Wall -Wno-unused-parameter)
+endif()
 endif()
