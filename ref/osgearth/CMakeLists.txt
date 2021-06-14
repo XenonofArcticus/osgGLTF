@@ -1,23 +1,27 @@
-SET(TARGET_H
-    GLTFReader.h
-    GLTFWriter.h
-    B3DMReader.h
-    B3DMWriter.h
+add_library(osgdb_gltf SHARED
+	"ReaderWriterGLTF.cpp"
+	"GLTFReader.h"
+	"GLTFWriter.h"
+	"B3DMReader.h"
+	"B3DMWriter.h"
 )
 
-SET(TARGET_SRC
-    ReaderWriterGLTF.cpp
+target_link_libraries(osgdb_gltf PRIVATE ${OPENSCENEGRAPH_LIBRARIES})
+target_include_directories(osgdb_gltf PRIVATE
+	${OPENSCENEGRAPH_INCLUDE_DIRS}
+	# "${PROJECT_SOURCE_DIR}/ext/tinygltf"
+	"${PROJECT_SOURCE_DIR}/ext/rapidjson/include/rapidjson"
 )
 
-INCLUDE_DIRECTORIES(
-    ${OSGEARTH_EMBEDDED_THIRD_PARTY_DIR}/tinygltf 
-    ${OSGEARTH_EMBEDDED_THIRD_PARTY_DIR}/rapidjson/include/rapidjson
-)
+if(WIN32)
+	target_compile_options(osgdb_gltf PRIVATE
+		/W4
+		# /wd4100
+		# /wd4267
+		# /wd4996
+		# /wd4701
+	)
 
-IF(draco_FOUND)
-    INCLUDE_DIRECTORIES( ${draco_INCLUDE_DIRS} )
-    SET(TARGET_LIBRARIES_VARS draco_LIBRARIES )
-ENDIF(draco_FOUND)
-
-#### end var setup  ###
-SETUP_PLUGIN(gltf)
+else(WIN32)
+	target_compile_options(osgdb_gltf PRIVATE -W -Wall -Wno-unused-parameter)
+endif()
