@@ -1,0 +1,9 @@
+[submodule "ext/tinygltf"]
+	path = ext/tinygltf
+	url = https://github.com/syoyo/tinygltf.git
+[submodule "ext/glTF-Sample-Models"]
+	path = ext/glTF-Sample-Models
+	url = https://github.com/KhronosGroup/glTF-Sample-Models
+[submodule "ext/rapidjson"]
+	path = ext/rapidjson
+	url = https://github.com/Tencent/rapidjson.git
