@@ -60,7 +60,7 @@ the **tinygltf** library (2.4.1 + some custom changes related to texturing).
 
 ### Testing Models
 
-TODO
+![jesesun 1.0 Model](ref/jesesun/Monster.png?raw=true "Dragon")
 
 > **NOTE**: Without a proper, custom rendering/shader pipeline, *any* model
 > loaded--with either of the two exisiting projects--looks bland and generic.
