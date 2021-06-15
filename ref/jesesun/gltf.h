@@ -210,7 +210,7 @@ namespace gltf {
 		bool ReaderWriterGLTF::findAnimationEndTime(const tinygltf::Scene &scene, 
 											float &animationEndTime, string &err) const;
 	};
-	REGISTER_OSGPLUGIN(gltf, ReaderWriterGLTF)
+	// REGISTER_OSGPLUGIN(gltf, ReaderWriterGLTF)
 }
 
 #endif

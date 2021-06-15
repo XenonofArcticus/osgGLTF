@@ -1312,6 +1312,7 @@ ReaderWriterGLTF::ReadResult ReaderWriterGLTF::readNode(const string &file,
 	return node;
 }
 
+#if 0
 int main(){
 	ref_ptr<osgViewer::Viewer> viewer = new osgViewer::Viewer;
 	//viewer->setSceneData(osgDB::readNodeFile("C:\\glTF\\sampleModels\\2_cylinder_engine\\glTF\\2_cylinder_engine.gltf"));
@@ -1325,3 +1326,6 @@ int main(){
 	//viewer->setSceneData(osgDB::readNodeFile("C:\\glTF\\sampleModels\\new\\Test_Ball_Hard\\Test_Ball_Hard.gltf"));
 	return viewer->run();
 }
+#endif
+
+REGISTER_OSGPLUGIN(gltf, ReaderWriterGLTF)

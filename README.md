@@ -38,6 +38,9 @@ the GLTF 1.0 format. However, unlike the osgEarth codebase, this implementation
 code every frame with the timestamp delta). It compiles without issue, and loads
 most of the 1.0 GLTF models in the official **glTF-Sample-Models** submodule.
 
+> **NOTE**: This project doesn't have any clear indication of its license. It
+> can only be used "as-is" or as "inspiration" for new code.
+
 ### osgEarth Reference Implementation
 
 The osgEarth loader uses a *modified* version of the **tinygltf** library, which
