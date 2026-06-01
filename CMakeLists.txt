@@ -11,5 +11,4 @@ find_package(OpenSceneGraph REQUIRED
 	osgAnimation
 )
 
-add_subdirectory("ref/jesesun")
-# add_subdirectory("ref/osgearth")
+add_subdirectory("src")

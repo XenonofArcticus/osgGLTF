@@ -6,7 +6,3 @@
 	path = ext/glTF-Sample-Models
 	url = https://github.com/KhronosGroup/glTF-Sample-Models
 	ignore = dirty
-[submodule "ext/rapidjson"]
-	path = ext/rapidjson
-	url = https://github.com/Tencent/rapidjson.git
-	ignore = dirty
