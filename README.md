@@ -4,6 +4,15 @@ Basic glTF 2.0 mesh/texture support for OpenSceneGraph. As of 6/1/26, works for
 all of the [the Khronos samples](https://github.com/KhronosGroup/glTF-Sample-Models),
 with more to potentially come.
 
+## Rendering Comparison
+
+![osgGLTF render compared with BabylonJS](ext/github/compare-babylonjs.png)
+
+The screenshot compares osgGLTF's current PBR/IBL rendering against BabylonJS using
+the same model and environment lighting. The goal is not pixel-perfect matching, but
+matching the material response closely enough that reflections, roughness, and HDR
+environment lighting behave like a modern glTF renderer should.
+
 ## Notes
 
 This code is a patched version of the [osgEarth](https://github.com/gwaldron/osgearth/tree/master/src/osgEarthDrivers/gltf)
