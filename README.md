@@ -41,8 +41,14 @@ auto specularEnv = osgGLTF::bakeSpecularIBL("input.hdr", options);
 The API returns an `osg::TextureCubeMap` with a full GGX-prefiltered mip chain.
 Use `bakeSpecularIBLToKTX2()` when you want the library to write the KTX2 file directly.
 
-Future work: expose a runtime probe/capture API similar in spirit to Unreal Engine's
-Reflection Capture Actors and Unity's Reflection Probes. The current baker is a
-synchronous utility; a later API should distinguish explicit `SYNC` and `ASYNC` bake
-modes so applications can either block for an immediate cubemap or attach an
-environment/reflection probe to an existing viewer and update it over normal frames.
+Python bindings for `bakeSpecularIBL` are planned via
+[OpenSceneGraph.py](https://github.com/cubicool/OpenSceneGraph.py), which will allow
+calling the bake pipeline from Python with a single line and receiving a
+`TextureCubeMap` that drops directly into an OSG scene graph.
+
+Future work: a dynamic reflection-probe API similar in spirit to Unreal Engine's
+Reflection Capture Actors and Unity's Reflection Probes. The current baker is
+synchronous and bakes from an equirectangular HDR image. A later API will support
+`ASYNC` capture directly from a live scene — attaching a probe to an existing viewer
+and updating the prefiltered cubemap over normal render frames without stalling the
+application.
