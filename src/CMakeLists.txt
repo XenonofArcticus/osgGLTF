@@ -1,3 +1,33 @@
+add_library(osgGLTF
+    IBLBaker.cpp
+)
+
+target_include_directories(osgGLTF PUBLIC
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>
+    $<INSTALL_INTERFACE:include>
+    ${OPENSCENEGRAPH_INCLUDE_DIRS}
+)
+
+target_link_libraries(osgGLTF PUBLIC
+    ${OPENSCENEGRAPH_LIBRARIES}
+    GL
+)
+
+set_target_properties(osgGLTF PROPERTIES
+    CXX_STANDARD          17
+    CXX_STANDARD_REQUIRED ON
+)
+
+install(TARGETS osgGLTF
+    ARCHIVE DESTINATION ${CMAKE_INSTALL_PREFIX}/lib64
+    LIBRARY DESTINATION ${CMAKE_INSTALL_PREFIX}/lib64
+    RUNTIME DESTINATION ${CMAKE_INSTALL_PREFIX}/bin
+)
+
+install(FILES osgGLTF/IBLBaker.hpp
+    DESTINATION ${CMAKE_INSTALL_PREFIX}/include/osgGLTF
+)
+
 add_library(osgdb_gltf MODULE
     ReaderWriterGLTF.cpp
 )
@@ -57,12 +87,12 @@ install(TARGETS osgdb_ktx2
 add_executable(osggltf-iblbake-gpu osggltf-iblbake-gpu.cpp)
 
 target_include_directories(osggltf-iblbake-gpu PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}
     ${OPENSCENEGRAPH_INCLUDE_DIRS}
 )
 
 target_link_libraries(osggltf-iblbake-gpu PRIVATE
-    ${OPENSCENEGRAPH_LIBRARIES}
-    GL
+    osgGLTF
 )
 
 set_target_properties(osggltf-iblbake-gpu PROPERTIES
