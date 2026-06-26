@@ -11,4 +11,16 @@ find_package(OpenSceneGraph REQUIRED
 	osgAnimation
 )
 
+# ---------------------------------------------------------------------------
+# KTX-Software (ext/KTX-Software submodule)
+# Disable everything we don't need to keep the build fast.
+# ---------------------------------------------------------------------------
+set(KTX_FEATURE_STATIC_LIBRARY  ON  CACHE BOOL "" FORCE)
+set(KTX_FEATURE_TOOLS           OFF CACHE BOOL "" FORCE)
+set(KTX_FEATURE_TESTS           OFF CACHE BOOL "" FORCE)
+set(KTX_FEATURE_DOC             OFF CACHE BOOL "" FORCE)
+set(KTX_FEATURE_LOADTEST_APPS   OFF CACHE BOOL "" FORCE)
+add_subdirectory("ext/KTX-Software")
+
 add_subdirectory("src")
+add_subdirectory("examples")

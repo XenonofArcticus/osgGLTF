@@ -6,3 +6,9 @@
 	path = ext/glTF-Sample-Models
 	url = https://github.com/KhronosGroup/glTF-Sample-Models
 	ignore = dirty
+[submodule "ext/glTF-Sample-Environments"]
+	path = ext/glTF-Sample-Environments
+	url = https://github.com/KhronosGroup/glTF-Sample-Environments.git
+[submodule "ext/KTX-Software"]
+	path = ext/KTX-Software
+	url = https://github.com/KhronosGroup/KTX-Software.git

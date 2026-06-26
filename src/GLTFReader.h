@@ -158,7 +158,8 @@ public:
                 mat.set(node.matrix.data());
                 mt->setMatrix(mat);
             }
-            else
+
+            if (mt->getMatrix().isIdentity())
             {
                 osg::Matrixd S, R, T;
                 if (node.scale.size() == 3)
@@ -203,6 +204,7 @@ public:
                          << " attrs=" << primitive.attributes.size() << std::endl;
 
                 osg::ref_ptr<osg::Geometry> geom = new osg::Geometry;
+                geom->setName(typeid(*this).name());
                 geom->setUseVertexBufferObjects(true);
 
                 osg::Vec4 baseColorFactor(1, 1, 1, 1);
@@ -230,6 +232,10 @@ public:
                     else if (attrName == "TEXCOORD_0") geom->setTexCoordArray(0, arrays[accessorIdx].get());
                     else if (attrName == "TEXCOORD_1") geom->setTexCoordArray(1, arrays[accessorIdx].get());
                     else if (attrName == "COLOR_0")    geom->setColorArray(arrays[accessorIdx].get());
+                    else if (attrName == "TANGENT") {
+                        arrays[accessorIdx]->setBinding(osg::Array::BIND_PER_VERTEX);
+                        geom->setVertexAttribArray(7, arrays[accessorIdx].get());
+                    }
                 }
 
                 // fall-back solid color if no COLOR_0
@@ -295,17 +301,18 @@ public:
                                     primitive.mode == TINYGLTF_MODE_TRIANGLE_FAN);
                 bool skipNormals = env.readOptions &&
                     env.readOptions->getOptionString().find("gltfSkipNormals") != std::string::npos;
+                osg::Geode* geode = new osg::Geode;
+                geode->addDrawable(geom);
+
                 if (isTriangles && !skipNormals && !geom->getNormalArray())
                 {
                     GLTF_NOTIFY << "[GLTFReader]     generating normals via SmoothingVisitor\n";
-                    osg::ref_ptr<osg::Geode> tmp = new osg::Geode;
-                    tmp->addChild(geom);
                     osgUtil::SmoothingVisitor sv;
-                    tmp->accept(sv);
+                    geode->accept(sv);
                 }
 
-                GLTF_NOTIFY << "[GLTFReader]     addChild geom to mesh group\n";
-                group->addChild(geom.get());
+                GLTF_NOTIFY << "[GLTFReader]     addChild geode to mesh group\n";
+                group->addChild(geode);
                 ++primIdx;
             }
             return group;
@@ -327,6 +334,29 @@ public:
                 osg::Texture2D* tex = getOrCreateTexture(pbr.baseColorTexture.index);
                 if (tex)
                     geom->getOrCreateStateSet()->setTextureAttributeAndModes(0, tex);
+            }
+
+            if (mat.normalTexture.index >= 0)
+            {
+                osg::Texture2D* tex = getOrCreateTexture(mat.normalTexture.index);
+                if (tex)
+                    geom->getOrCreateStateSet()->setTextureAttributeAndModes(1, tex);
+            }
+
+            // metallicRoughnessTexture and occlusionTexture are often the same
+            // image (R=occlusion, G=roughness, B=metallic). Bind once to unit 2.
+            if (pbr.metallicRoughnessTexture.index >= 0)
+            {
+                osg::Texture2D* tex = getOrCreateTexture(pbr.metallicRoughnessTexture.index);
+                if (tex)
+                    geom->getOrCreateStateSet()->setTextureAttributeAndModes(2, tex);
+            }
+
+            if (mat.emissiveTexture.index >= 0)
+            {
+                osg::Texture2D* tex = getOrCreateTexture(mat.emissiveTexture.index);
+                if (tex)
+                    geom->getOrCreateStateSet()->setTextureAttributeAndModes(3, tex);
             }
 
             if (mat.alphaMode == "BLEND" || mat.alphaMode == "MASK")
