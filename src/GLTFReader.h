@@ -26,11 +26,20 @@
 #include <osgDB/Registry>
 #include <osgUtil/SmoothingVisitor>
 
+#include <cstdlib>
+#include <map>
 #include <mutex>
 #include <unordered_map>
 #include <string>
 
 // tiny_gltf.h is intentionally NOT included here — see file comment above.
+
+#ifndef GL_SRGB8
+#  define GL_SRGB8 0x8C41
+#endif
+#ifndef GL_SRGB8_ALPHA8
+#  define GL_SRGB8_ALPHA8 0x8C43
+#endif
 
 // Change this to GLTF_NOTIFY or GLTF_NOTIFY to reduce verbosity.
 #define GLTF_NOTIFY OSG_NOTICE
@@ -209,15 +218,11 @@ public:
 
                 osg::Vec4 baseColorFactor(1, 1, 1, 1);
 
-                if (primitive.material >= 0 &&
-                    primitive.material < (int)model.materials.size())
-                {
-                    GLTF_NOTIFY << "[GLTFReader]     applyMaterial " << primitive.material << std::endl;
-                    applyMaterial(primitive.material, baseColorFactor, geom.get());
-                }
-
-                // vertex attributes
+                // vertex attributes — parsed before material application since
+                // texture-unit binding needs to know which UV set (TEXCOORD_n)
+                // each texture actually asks for.
                 GLTF_NOTIFY << "[GLTFReader]     attributes:\n";
+                std::map<int, osg::Array*> texCoordSets;
                 for (auto& [attrName, accessorIdx] : primitive.attributes)
                 {
                     bool valid = accessorIdx >= 0 && accessorIdx < (int)arrays.size()
@@ -229,13 +234,22 @@ public:
 
                     if      (attrName == "POSITION")   geom->setVertexArray(arrays[accessorIdx].get());
                     else if (attrName == "NORMAL")     geom->setNormalArray(arrays[accessorIdx].get());
-                    else if (attrName == "TEXCOORD_0") geom->setTexCoordArray(0, arrays[accessorIdx].get());
-                    else if (attrName == "TEXCOORD_1") geom->setTexCoordArray(1, arrays[accessorIdx].get());
                     else if (attrName == "COLOR_0")    geom->setColorArray(arrays[accessorIdx].get());
                     else if (attrName == "TANGENT") {
                         arrays[accessorIdx]->setBinding(osg::Array::BIND_PER_VERTEX);
                         geom->setVertexAttribArray(7, arrays[accessorIdx].get());
                     }
+                    else if (attrName.rfind("TEXCOORD_", 0) == 0) {
+                        int uvSet = std::atoi(attrName.c_str() + 9);
+                        texCoordSets[uvSet] = arrays[accessorIdx].get();
+                    }
+                }
+
+                if (primitive.material >= 0 &&
+                    primitive.material < (int)model.materials.size())
+                {
+                    GLTF_NOTIFY << "[GLTFReader]     applyMaterial " << primitive.material << std::endl;
+                    applyMaterial(primitive.material, baseColorFactor, geom.get(), texCoordSets);
                 }
 
                 // fall-back solid color if no COLOR_0
@@ -319,45 +333,111 @@ public:
         }
 
         // ---- material ------------------------------------------------ //
+        // Fixed-function multitexturing ties "which GL texture unit" to "which
+        // TexCoordArray is bound to that unit" — so each texture channel gets a
+        // fixed unit (base/diffuse=0, normal=1, MR/specGloss=2, emissive=3), but
+        // the UV data bound to that unit must match what the texture actually
+        // requests via textureInfo.texCoord, not just whatever happened to be
+        // parsed as TEXCOORD_0/1.
         void applyMaterial(int matIdx, osg::Vec4& baseColorFactor,
-                           osg::Geometry* geom) const
+                           osg::Geometry* geom,
+                           const std::map<int, osg::Array*>& texCoordSets) const
         {
             const tinygltf::Material& mat = model.materials[matIdx];
             const auto& pbr = mat.pbrMetallicRoughness;
+
+            // sRGB: per the glTF spec, baseColor/diffuse and emissive textures
+            // are authored in sRGB gamma space; normal and ORM (occlusion/
+            // roughness/metallic) textures are linear data, not color, and
+            // must never be gamma-decoded.
+            auto bindTexture = [&](int unit, int texIdx, int texCoord, bool sRGB)
+            {
+                osg::Texture2D* tex = getOrCreateTexture(texIdx, sRGB);
+                if (!tex) return;
+                geom->getOrCreateStateSet()->setTextureAttributeAndModes(unit, tex);
+                auto it = texCoordSets.find(texCoord);
+                if (it != texCoordSets.end())
+                    geom->setTexCoordArray(unit, it->second);
+            };
 
             if (pbr.baseColorFactor.size() == 4)
                 baseColorFactor.set(pbr.baseColorFactor[0], pbr.baseColorFactor[1],
                                     pbr.baseColorFactor[2], pbr.baseColorFactor[3]);
 
-            if (pbr.baseColorTexture.index >= 0)
-            {
-                osg::Texture2D* tex = getOrCreateTexture(pbr.baseColorTexture.index);
-                if (tex)
-                    geom->getOrCreateStateSet()->setTextureAttributeAndModes(0, tex);
-            }
+            bool haveCoreBaseColor = pbr.baseColorTexture.index >= 0;
+
+            if (haveCoreBaseColor)
+                bindTexture(0, pbr.baseColorTexture.index, pbr.baseColorTexture.texCoord, true);
 
             if (mat.normalTexture.index >= 0)
-            {
-                osg::Texture2D* tex = getOrCreateTexture(mat.normalTexture.index);
-                if (tex)
-                    geom->getOrCreateStateSet()->setTextureAttributeAndModes(1, tex);
-            }
+                bindTexture(1, mat.normalTexture.index, mat.normalTexture.texCoord, false);
 
             // metallicRoughnessTexture and occlusionTexture are often the same
             // image (R=occlusion, G=roughness, B=metallic). Bind once to unit 2.
             if (pbr.metallicRoughnessTexture.index >= 0)
-            {
-                osg::Texture2D* tex = getOrCreateTexture(pbr.metallicRoughnessTexture.index);
-                if (tex)
-                    geom->getOrCreateStateSet()->setTextureAttributeAndModes(2, tex);
-            }
+                bindTexture(2, pbr.metallicRoughnessTexture.index, pbr.metallicRoughnessTexture.texCoord, false);
 
             if (mat.emissiveTexture.index >= 0)
+                bindTexture(3, mat.emissiveTexture.index, mat.emissiveTexture.texCoord, true);
+
+            // KHR_materials_pbrSpecularGlossiness — legacy but still valid, real
+            // Sketchfab-era content uses it. Only fills in the base-color slot
+            // (diffuseTexture) and reuses the MR slot for specularGlossinessTexture
+            // when the core pbrMetallicRoughness path didn't already supply a
+            // base color texture. This does not attempt a full spec/gloss ->
+            // metallic/roughness BRDF conversion — it just makes the diffuse
+            // texture visible and UV-correct.
+            if (!haveCoreBaseColor)
             {
-                osg::Texture2D* tex = getOrCreateTexture(mat.emissiveTexture.index);
-                if (tex)
-                    geom->getOrCreateStateSet()->setTextureAttributeAndModes(3, tex);
+                auto extIt = mat.extensions.find("KHR_materials_pbrSpecularGlossiness");
+                if (extIt != mat.extensions.end())
+                {
+                    const tinygltf::Value& sg = extIt->second;
+
+                    if (sg.Has("diffuseFactor"))
+                    {
+                        const tinygltf::Value& df = sg.Get("diffuseFactor");
+                        if (df.IsArray() && df.ArrayLen() == 4)
+                            baseColorFactor.set(
+                                (float)df.Get(0).GetNumberAsDouble(),
+                                (float)df.Get(1).GetNumberAsDouble(),
+                                (float)df.Get(2).GetNumberAsDouble(),
+                                (float)df.Get(3).GetNumberAsDouble());
+                    }
+
+                    if (sg.Has("diffuseTexture"))
+                    {
+                        const tinygltf::Value& dt = sg.Get("diffuseTexture");
+                        int idx      = dt.Has("index")    ? dt.Get("index").GetNumberAsInt()    : -1;
+                        int texCoord = dt.Has("texCoord")  ? dt.Get("texCoord").GetNumberAsInt() : 0;
+                        if (idx >= 0)
+                            bindTexture(0, idx, texCoord, true);
+                    }
+
+                    if (sg.Has("specularGlossinessTexture"))
+                    {
+                        const tinygltf::Value& sgt = sg.Get("specularGlossinessTexture");
+                        int idx      = sgt.Has("index")   ? sgt.Get("index").GetNumberAsInt()   : -1;
+                        int texCoord = sgt.Has("texCoord") ? sgt.Get("texCoord").GetNumberAsInt() : 0;
+                        // RGB = specular color (sRGB per spec), A = glossiness
+                        // (linear). GL_SRGB8_ALPHA8 decodes RGB only and always
+                        // leaves alpha untouched, so this is correct for both
+                        // channels at once.
+                        if (idx >= 0)
+                            bindTexture(2, idx, texCoord, true);
+                    }
+                }
             }
+
+            // Export metallicFactor/roughnessFactor as uniforms for downstream
+            // PBR shaders (e.g. pyosg-lighting/09-ibl.py) that sample the ORM
+            // texture directly — tinygltf defaults both to 1.0 per spec even
+            // when the glTF JSON omits pbrMetallicRoughness entirely, so this
+            // is always a sane value.
+            geom->getOrCreateStateSet()->addUniform(
+                new osg::Uniform("metallicFactor", (float)pbr.metallicFactor));
+            geom->getOrCreateStateSet()->addUniform(
+                new osg::Uniform("roughnessFactor", (float)pbr.roughnessFactor));
 
             if (mat.alphaMode == "BLEND" || mat.alphaMode == "MASK")
             {
@@ -367,7 +447,11 @@ public:
         }
 
         // ---- texture ------------------------------------------------- //
-        osg::Texture2D* getOrCreateTexture(int texIdx) const
+        // sRGB must be known per-texture-*use*, not per-image-file: the same
+        // image could in principle be referenced once as a color texture and
+        // once as linear data, so the cache key includes the color-space flag
+        // to avoid one use silently reusing the other's decode setting.
+        osg::Texture2D* getOrCreateTexture(int texIdx, bool sRGB) const
         {
             if (texIdx < 0 || texIdx >= (int)model.textures.size())
                 return nullptr;
@@ -384,7 +468,8 @@ public:
             std::string cacheKey;
             if (!embedded && !image.uri.empty())
                 cacheKey = osgDB::getRealPath(osgDB::concatPaths(
-                    osgDB::getFilePath(env.referrer), image.uri));
+                    osgDB::getFilePath(env.referrer), image.uri))
+                    + (sRGB ? "|sRGB" : "|linear");
 
             TextureCache* tc = reader->_texCache;
             if (tc && !cacheKey.empty())
@@ -420,8 +505,10 @@ public:
             if (!img.valid())
                 return nullptr;
 
-            if (img->getPixelFormat() == GL_RGB)  img->setInternalTextureFormat(GL_RGB8);
-            if (img->getPixelFormat() == GL_RGBA) img->setInternalTextureFormat(GL_RGBA8);
+            if (img->getPixelFormat() == GL_RGB)
+                img->setInternalTextureFormat(sRGB ? GL_SRGB8 : GL_RGB8);
+            if (img->getPixelFormat() == GL_RGBA)
+                img->setInternalTextureFormat(sRGB ? GL_SRGB8_ALPHA8 : GL_RGBA8);
 
             osg::ref_ptr<osg::Texture2D> osgTex = new osg::Texture2D(img.get());
             osgTex->setResizeNonPowerOfTwoHint(false);
