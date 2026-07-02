@@ -10,6 +10,13 @@ find_package(OpenSceneGraph REQUIRED
 	osgUtil
 )
 
+# Emit old-style DT_RPATH instead of the linker's default DT_RUNPATH. RUNPATH
+# is searched *after* LD_LIBRARY_PATH, so a shell that exports LD_LIBRARY_PATH
+# (e.g. for a different OSG checkout) silently shadows a freshly built,
+# not-yet-installed binary's own build-tree libraries. RPATH is searched
+# first, so build-tree binaries reliably pick up what CMake just built.
+add_link_options(-Wl,--disable-new-dtags)
+
 # ---------------------------------------------------------------------------
 # KTX-Software (ext/KTX-Software submodule)
 # Disable everything we don't need to keep the build fast.

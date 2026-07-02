@@ -14,7 +14,7 @@
 #include <osg/Viewport>
 
 #include <algorithm>
-#include <cstdlib>
+// #include <cstdlib>
 
 #ifndef GL_RGB16F
 #  define GL_RGB16F 0x881B
@@ -223,29 +223,13 @@ osg::ref_ptr<osg::TextureCubeMap> makePrefilterBake(
 
 }
 
-void configureIBLGLContext() {
-#if defined(_WIN32)
-	_putenv("OSG_GL_CONTEXT_PROFILE_MASK=1");
-	_putenv("OSG_GL_VERSION=4.6");
-	_putenv("OSG_GL_CONTEXT_VERSION=4.6");
-	_putenv("OSG_THREADING=SingleThreaded");
-#else
-	setenv("OSG_GL_CONTEXT_PROFILE_MASK", "1", 1);
-	setenv("OSG_GL_VERSION", "4.6", 1);
-	setenv("OSG_GL_CONTEXT_VERSION", "4.6", 1);
-	setenv("OSG_THREADING", "SingleThreaded", 1);
-#endif
-}
-
-IBLReadback::IBLReadback(osg::TextureCubeMap* tex, int size, int mips, int trigger):
+IBLReadback::IBLReadback(osg::TextureCubeMap* tex, int trigger, bool syncBeforeRead):
 srcTex(tex),
-prefilterSize(size),
-numMips(mips),
-triggerFrame(trigger) {
+triggerFrame(trigger),
+sync(syncBeforeRead) {
 	result = new osg::TextureCubeMap();
 }
 
-// TODO: Why are we calling RAW GL functions here?!
 void IBLReadback::operator()(osg::RenderInfo& ri) const {
 	auto* self = const_cast<IBLReadback*>(this);
 
@@ -260,65 +244,20 @@ void IBLReadback::operator()(osg::RenderInfo& ri) const {
 		return;
 	}
 
-	glFinish();
-	glBindTexture(GL_TEXTURE_CUBE_MAP, texObj->id());
+	// The only step here without an osg-level equivalent: forcing the GPU to
+	// finish the bake before we trust the texture contents. Skipping this
+	// (see IBLBakeOptions::syncReadback) is the async/best-effort mode.
+	if(sync) glFinish();
 
-	GLint prevAlign = 4;
-
-	glGetIntegerv(GL_PACK_ALIGNMENT, &prevAlign);
-	glPixelStorei(GL_PACK_ALIGNMENT, 1);
+	texObj->bind();
 
 	for(int face = 0; face < 6; ++face) {
-		size_t totalBytes = 0;
-
-		for(int mip = 0; mip < numMips; ++mip) {
-			int s = std::max(1, prefilterSize >> mip);
-
-			totalBytes += size_t(s) * size_t(s) * 3u * 2u;
-		}
-
-		auto* buf = new unsigned char[totalBytes];
-
-		osg::Image::MipmapDataType offsets;
-		size_t off = 0;
-
-		for(int mip = 0; mip < numMips; ++mip) {
-			int s = std::max(1, prefilterSize >> mip);
-			size_t mipBytes = size_t(s) * size_t(s) * 3u * 2u;
-
-			if(mip > 0) offsets.push_back(static_cast<unsigned int>(off));
-
-			glGetTexImage(
-				GL_TEXTURE_CUBE_MAP_POSITIVE_X + face,
-				mip,
-				GL_RGB,
-				GL_HALF_FLOAT,
-				buf + off
-			);
-
-			off += mipBytes;
-		}
-
 		auto* img = new osg::Image();
 
-		img->setImage(
-			prefilterSize,
-			prefilterSize,
-			1,
-			GL_RGB16F,
-			GL_RGB,
-			GL_HALF_FLOAT,
-			buf,
-			osg::Image::USE_NEW_DELETE
-		);
-
-		if(!offsets.empty()) img->setMipmapLevels(offsets);
+		img->readImageFromCurrentTexture(ri.getContextID(), true, GL_HALF_FLOAT, face);
 
 		self->result->setImage(face, img);
 	}
-
-	glPixelStorei(GL_PACK_ALIGNMENT, prevAlign);
-	glBindTexture(GL_TEXTURE_CUBE_MAP, 0);
 
 	self->done = true;
 }
@@ -329,7 +268,6 @@ IBLBakeScene createIBLBakeScene(osg::Image* equirectImage, const IBLBakeOptions&
 	if(!equirectImage) return scene;
 
 	const int prefilterSize = std::max(1, options.prefilterSize);
-	const int numMips = mipCountForSize(prefilterSize);
 
 	auto* envTex = new osg::Texture2D();
 
@@ -351,9 +289,8 @@ IBLBakeScene createIBLBakeScene(osg::Image* equirectImage, const IBLBakeOptions&
 	scene.root = root;
 	scene.readback = new IBLReadback(
 		prefilterTex.get(),
-		prefilterSize,
-		numMips,
-		std::max(1, options.readbackFrame)
+		std::max(1, options.readbackFrame),
+		options.syncReadback
 	);
 
 	return scene;

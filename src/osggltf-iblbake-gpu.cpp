@@ -12,6 +12,20 @@
 #include <cstdio>
 #include <string>
 
+void configureIBLGLContext() {
+#if defined(_WIN32)
+	_putenv("OSG_GL_CONTEXT_PROFILE_MASK=1");
+	_putenv("OSG_GL_VERSION=4.6");
+	_putenv("OSG_GL_CONTEXT_VERSION=4.6");
+	_putenv("OSG_THREADING=SingleThreaded");
+#else
+	setenv("OSG_GL_CONTEXT_PROFILE_MASK", "1", 1);
+	setenv("OSG_GL_VERSION", "4.6", 1);
+	setenv("OSG_GL_CONTEXT_VERSION", "4.6", 1);
+	setenv("OSG_THREADING", "SingleThreaded", 1);
+#endif
+}
+
 int main(int argc, char* argv[]) {
 	if(argc < 3) {
 		OSG_WARN
@@ -35,7 +49,7 @@ int main(int argc, char* argv[]) {
 
 	osg::setNotifyLevel(osg::NOTICE);
 
-	if(options.configureGLContext) osgGLTF::configureIBLGLContext();
+	// if(options.configureGLContext) osgGLTF::configureIBLGLContext();
 
 	osg::ref_ptr<osg::Image> image = osgDB::readImageFile(inputPath);
 
