@@ -89,7 +89,7 @@
 // #include <vulkan/vulkan_core.h>
 
 // ---------------------------------------------------------------------------
-// VkFormat ↔ GL mappings
+// VkFormat <-> GL mappings
 // ---------------------------------------------------------------------------
 
 struct GLFormat { GLenum internal, pixel, type; bool compressed; };
@@ -101,7 +101,7 @@ static bool vkFormatToGL(ktx_uint32_t vk, GLFormat& out)
     case VK_FORMAT_R8G8B8_UNORM:        out = {GL_RGB8,             GL_RGB,  GL_UNSIGNED_BYTE, false}; return true;
     case VK_FORMAT_R8G8B8A8_UNORM:      out = {GL_RGBA8,            GL_RGBA, GL_UNSIGNED_BYTE, false}; return true;
     case VK_FORMAT_R8G8B8A8_SRGB:       out = {GL_SRGB8_ALPHA8,     GL_RGBA, GL_UNSIGNED_BYTE, false}; return true;
-    // 16-bit float  ← primary IBL format
+    // 16-bit float  <- primary IBL format
     case VK_FORMAT_R16G16B16_SFLOAT:    out = {GL_RGB16F,            GL_RGB,  GL_HALF_FLOAT,    false}; return true;
     case VK_FORMAT_R16G16B16A16_SFLOAT: out = {GL_RGBA16F,           GL_RGBA, GL_HALF_FLOAT,    false}; return true;
     // 32-bit float
@@ -115,7 +115,7 @@ static bool vkFormatToGL(ktx_uint32_t vk, GLFormat& out)
     }
 }
 
-// GL internal format → VkFormat (write path)
+// GL internal format -> VkFormat (write path)
 static bool glToVkFormat(GLenum internal, ktx_uint32_t& out)
 {
     switch (internal) {
@@ -130,7 +130,7 @@ static bool glToVkFormat(GLenum internal, ktx_uint32_t& out)
 }
 
 // ---------------------------------------------------------------------------
-// Build a single osg::Image for one face (mip 0 … numLevels-1)
+// Build a single osg::Image for one face (mip 0 ... numLevels-1)
 // ---------------------------------------------------------------------------
 
 static osg::ref_ptr<osg::Image> buildFaceImage(
@@ -239,7 +239,7 @@ class ReaderWriterKTX2 : public osgDB::ReaderWriter
         return img.get();
     }
 
-    // getMipmapData(N) = _data + getMipmapOffset(N); getMipmapOffset(0) = 0, so N=0 → _data.
+    // getMipmapData(N) = _data + getMipmapOffset(N); getMipmapOffset(0) = 0, so N=0 -> _data.
     static const unsigned char* getMipPtr(const osg::Image* img, uint32_t mip)
     {
         return img->getMipmapData(mip);
@@ -384,7 +384,7 @@ public:
         ReadResult rr = readObject(file, options);
         if (!rr.success()) return rr;
         if (rr.validImage()) return rr;
-        OSG_WARN << "ReaderWriterKTX2: readImage() called on a cubemap KTX2 — use readObject() instead\n";
+        OSG_WARN << "ReaderWriterKTX2: readImage() called on a cubemap KTX2 -- use readObject() instead\n";
         return ReadResult::FILE_NOT_HANDLED;
     }
 

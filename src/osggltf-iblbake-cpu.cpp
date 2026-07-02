@@ -1,4 +1,4 @@
-// ibl-bake-cpu — CPU-only IBL prefilter baker (no OpenGL required).
+// ibl-bake-cpu -- CPU-only IBL prefilter baker (no OpenGL required).
 //
 // Usage: ibl-bake-cpu <input.hdr> <output.ktx2> [--prefilter-size N] [--samples N]
 //
@@ -58,7 +58,7 @@ static v3 normalize(v3 v) {
 static v3 reflect(v3 v, v3 n) { return v + n * (-2.0f * dot(v, n)); }
 
 // ---------------------------------------------------------------------------
-// Float32 → Float16 conversion
+// Float32 -> Float16 conversion
 // ---------------------------------------------------------------------------
 
 static uint16_t f32_to_f16(float f)
@@ -71,9 +71,9 @@ static uint16_t f32_to_f16(float f)
     if (e == 0xFF) return (uint16_t)((s << 15) | 0x7C00u | (m ? 0x200u : 0u));  // inf/nan
 
     int se = (int)e - 127 + 15;
-    if (se >= 31) return (uint16_t)((s << 15) | 0x7C00u);   // overflow → inf
+    if (se >= 31) return (uint16_t)((s << 15) | 0x7C00u);   // overflow -> inf
     if (se <= 0) {
-        if (se < -10) return (uint16_t)(s << 15);           // underflow → 0
+        if (se < -10) return (uint16_t)(s << 15);           // underflow -> 0
         uint32_t ms = (m | 0x800000u) >> (uint32_t)(14 - se);
         return (uint16_t)((s << 15) | ms);
     }
@@ -82,13 +82,13 @@ static uint16_t f32_to_f16(float f)
 
 // ---------------------------------------------------------------------------
 // Equirectangular HDR sampling
-// Matches the equirect_uv() + Z-up→Y-up chain in ibl-bake.cpp GLSL shaders.
+// Matches the equirect_uv() + Z-up->Y-up chain in ibl-bake.cpp GLSL shaders.
 // dir_gl: direction in GL Y-up cubemap space.
 // ---------------------------------------------------------------------------
 
 static v3 sampleHDR(const float* img, int W, int H, v3 dir_gl)
 {
-    // GL Y-up → Z-up: (x, y, z) → (x, -z, y)
+    // GL Y-up -> Z-up: (x, y, z) -> (x, -z, y)
     float dzu_x = dir_gl.x, dzu_y = -dir_gl.z, dzu_z = dir_gl.y;
 
     // equirect_uv(dir_zup) from GLSL: d = (dir_zup.x, dir_zup.z, -dir_zup.y)
@@ -123,7 +123,7 @@ static v3 sampleHDR(const float* img, int W, int H, v3 dir_gl)
 }
 
 // ---------------------------------------------------------------------------
-// Cubemap face direction — matches PREFILTER_FRAG faceIndex branches exactly
+// Cubemap face direction -- matches PREFILTER_FRAG faceIndex branches exactly
 // ---------------------------------------------------------------------------
 
 static v3 faceDir(int face, float u, float v)
@@ -175,7 +175,7 @@ static v3 importanceSampleGGX(v2 Xi, v3 N, float roughness)
 }
 
 // ---------------------------------------------------------------------------
-// bake one mip×face block into buf (RGB float32, already allocated)
+// bake one mipxface block into buf (RGB float32, already allocated)
 // ---------------------------------------------------------------------------
 
 static void bakeFaceMip(
@@ -245,7 +245,7 @@ int main(int argc, char* argv[])
         if (!strcmp(argv[i], "--samples")         && i+1 < argc) numSamples    = (uint32_t)std::atoi(argv[++i]);
     }
 
-    // Load HDR — flip vertically so row 0 = bottom (OpenGL convention),
+    // Load HDR -- flip vertically so row 0 = bottom (OpenGL convention),
     // matching OSG's HDR reader and the GLSL equirect_uv() formula.
     stbi_set_flip_vertically_on_load(1);
     int hdrW = 0, hdrH = 0, hdrCh = 0;
@@ -316,7 +316,7 @@ int main(int argc, char* argv[])
         int mipSize = std::max(1, prefilterSize >> mip);
         size_t pixelCount = (size_t)mipSize * mipSize;
 
-        // Convert float32 → float16 per face
+        // Convert float32 -> float16 per face
         std::vector<uint16_t> f16(pixelCount * 3);
 
         for (int face = 0; face < 6; ++face) {

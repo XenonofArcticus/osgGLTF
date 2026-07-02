@@ -1,4 +1,4 @@
-// osggltf-iblbake-gpu — bake an equirectangular HDR into a GGX-prefiltered KTX2 cubemap.
+// osggltf-iblbake-gpu -- bake an equirectangular HDR into a GGX-prefiltered KTX2 cubemap.
 
 #include <osg/Notify>
 

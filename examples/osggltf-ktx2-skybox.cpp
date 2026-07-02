@@ -26,7 +26,7 @@
 // Shaders
 // ---------------------------------------------------------------------------
 
-static const char* SKYBOX_VERT = R"glsl(
+static const char* SKYBOX_VERT = R"GLSL(
 #version 460 core
 in vec4 osg_Vertex;
 uniform mat4 osg_ModelViewProjectionMatrix;
@@ -35,9 +35,9 @@ void main() {
 	vDir = osg_Vertex.xyz;
 	gl_Position = osg_ModelViewProjectionMatrix * osg_Vertex;
 }
-)glsl";
+)GLSL";
 
-static const char* SKYBOX_FRAG = R"glsl(
+static const char* SKYBOX_FRAG = R"GLSL(
 #version 460 core
 uniform samplerCube envMap;
 uniform float mipLevel;
@@ -50,10 +50,10 @@ void main() {
 	color = pow(color, vec3(1.0 / 2.2));
 	fragColor = vec4(color, 1.0);
 }
-)glsl";
+)GLSL";
 
 // Vertex positions are already in NDC; faceDir carries the cubemap direction.
-static const char* CROSS_VERT = R"glsl(
+static const char* CROSS_VERT = R"GLSL(
 #version 460 core
 in vec4 osg_Vertex;
 layout(location = 1) in vec3 faceDir;
@@ -62,7 +62,7 @@ void main() {
 	vDir = faceDir;
 	gl_Position = vec4(osg_Vertex.xy, 0.0, 1.0);
 }
-)glsl";
+)GLSL";
 
 // ---------------------------------------------------------------------------
 // Cross geometry builder
@@ -78,8 +78,7 @@ void main() {
 // Directions per vertex follow the OpenGL cubemap spec:
 // dir(s,t) = MA + (2s-1)*SC + (2t-1)*TC
 // with BL=(s=0,t=0), BR=(s=1,t=0), TR=(s=1,t=1), TL=(s=0,t=1).
-static osg::Geometry* buildCrossGeometry()
-{
+static osg::Geometry* buildCrossGeometry() {
 	auto* geom = new osg::Geometry();
 	auto* verts = new osg::Vec3Array();
 	auto* dirs = new osg::Vec3Array();
@@ -123,7 +122,7 @@ static osg::Geometry* buildCrossGeometry()
 		}},
 	};
 
-	for (auto& f : faces) {
+	for(auto& f : faces) {
 		auto base = (unsigned)verts->size();
 
 		verts->push_back({f.cx - cw, f.cy - ch, 0.0f}); // BL
@@ -131,7 +130,7 @@ static osg::Geometry* buildCrossGeometry()
 		verts->push_back({f.cx + cw, f.cy + ch, 0.0f}); // TR
 		verts->push_back({f.cx - cw, f.cy + ch, 0.0f}); // TL
 
-		for (int i = 0; i < 4; ++i) dirs->push_back(f.dir[i]);
+		for(int i = 0; i < 4; ++i) dirs->push_back(f.dir[i]);
 
 		elems->push_back(base + 0); elems->push_back(base + 1); elems->push_back(base + 2);
 		elems->push_back(base + 0); elems->push_back(base + 2); elems->push_back(base + 3);
@@ -141,6 +140,7 @@ static osg::Geometry* buildCrossGeometry()
 	geom->setVertexAttribArray(1, dirs);
 	geom->setVertexAttribBinding(1, osg::Geometry::BIND_PER_VERTEX);
 	geom->addPrimitiveSet(elems);
+
 	return geom;
 }
 
@@ -148,56 +148,57 @@ static osg::Geometry* buildCrossGeometry()
 // Key handlers
 // ---------------------------------------------------------------------------
 
-class MipHandler : public osgGA::GUIEventHandler
-{
+class MipHandler: public osgGA::GUIEventHandler {
 	osg::ref_ptr<osg::Uniform> _mipUniform;
 	float _mipLevel = 0.0f;
-	int _maxMip	= 0;
+	int _maxMip = 0;
 
 	void _clamp() { _mipLevel = std::max(0.0f, std::min(float(_maxMip), _mipLevel)); }
-	void _apply()
-	{
+
+	void _apply() {
 		_mipUniform->set(_mipLevel);
-		printf(" mip level: %.1f / %d\n", _mipLevel, _maxMip);
+
+		std::printf(" mip level: %.1f / %d\n", _mipLevel, _maxMip);
 	}
 
 public:
-	MipHandler(osg::Uniform* u, int maxMip) : _mipUniform(u), _maxMip(maxMip) {}
+	MipHandler(osg::Uniform* u, int maxMip): _mipUniform(u), _maxMip(maxMip) {}
 
-	bool handle(const osgGA::GUIEventAdapter& ea, osgGA::GUIActionAdapter&) override
-	{
-		if (ea.getEventType() == osgGA::GUIEventAdapter::KEYDOWN) {
-			if (ea.getKey() == '+' || ea.getKey() == '=') { ++_mipLevel; _clamp(); _apply(); return true; }
-			if (ea.getKey() == '-' || ea.getKey() == '_') { --_mipLevel; _clamp(); _apply(); return true; }
-			if (ea.getKey() == '.' || ea.getKey() == '>') { _mipLevel += 0.25f; _clamp(); _apply(); return true; }
-			if (ea.getKey() == ',' || ea.getKey() == '<') { _mipLevel -= 0.25f; _clamp(); _apply(); return true; }
+	bool handle(const osgGA::GUIEventAdapter& ea, osgGA::GUIActionAdapter&) override {
+		if(ea.getEventType() == osgGA::GUIEventAdapter::KEYDOWN) {
+			if(ea.getKey() == '+' || ea.getKey() == '=') { ++_mipLevel; _clamp(); _apply(); return true; }
+			if(ea.getKey() == '-' || ea.getKey() == '_') { --_mipLevel; _clamp(); _apply(); return true; }
+			if(ea.getKey() == '.' || ea.getKey() == '>') { _mipLevel += 0.25f; _clamp(); _apply(); return true; }
+			if(ea.getKey() == ',' || ea.getKey() == '<') { _mipLevel -= 0.25f; _clamp(); _apply(); return true; }
 		}
-		if (ea.getEventType() == osgGA::GUIEventAdapter::SCROLL) {
-			if (ea.getScrollingMotion() == osgGA::GUIEventAdapter::SCROLL_UP)
-				{ _mipLevel += 0.5f; _clamp(); _apply(); return true; }
-			if (ea.getScrollingMotion() == osgGA::GUIEventAdapter::SCROLL_DOWN)
-				{ _mipLevel -= 0.5f; _clamp(); _apply(); return true; }
+
+		if(ea.getEventType() == osgGA::GUIEventAdapter::SCROLL) {
+			if(ea.getScrollingMotion() == osgGA::GUIEventAdapter::SCROLL_UP) { _mipLevel += 0.5f; _clamp(); _apply(); return true; }
+			if(ea.getScrollingMotion() == osgGA::GUIEventAdapter::SCROLL_DOWN) { _mipLevel -= 0.5f; _clamp(); _apply(); return true; }
 		}
+
 		return false;
 	}
 };
 
-class ModeHandler : public osgGA::GUIEventHandler
-{
+class ModeHandler: public osgGA::GUIEventHandler {
 	osg::ref_ptr<osg::Switch> _switch;
 	bool _cross = false;
-public:
-	ModeHandler(osg::Switch* sw) : _switch(sw) {}
 
-	bool handle(const osgGA::GUIEventAdapter& ea, osgGA::GUIActionAdapter&) override
-	{
-		if (ea.getEventType() == osgGA::GUIEventAdapter::KEYDOWN && ea.getKey() == 'c') {
+public:
+	ModeHandler(osg::Switch* sw): _switch(sw) {}
+
+	bool handle(const osgGA::GUIEventAdapter& ea, osgGA::GUIActionAdapter&) override {
+		if(ea.getEventType() == osgGA::GUIEventAdapter::KEYDOWN && ea.getKey() == 'c') {
 			_cross = !_cross;
 			_switch->setValue(0, !_cross);
 			_switch->setValue(1, _cross);
-			printf(" mode: %s\n", _cross ? "cross" : "skybox");
+
+			std::printf(" mode: %s\n", _cross ? "cross" : "skybox");
+
 			return true;
 		}
+
 		return false;
 	}
 };
@@ -206,36 +207,54 @@ public:
 // main
 // ---------------------------------------------------------------------------
 
-int main(int argc, char* argv[])
-{
-	if (argc < 2) {
-		fprintf(stderr, "Usage: ktx2-skybox <file.ktx2>\n"
-						" +/- or scroll: step through mip levels\n"
-						" c : toggle flat-cross display\n");
+int main(int argc, char* argv[]) {
+	if(argc < 2) {
+		std::fprintf(stderr,
+			"Usage: ktx2-skybox <file.ktx2>\n"
+			" +/- or scroll: step through mip levels\n"
+			" c : toggle flat-cross display\n"
+		);
+
 		return 1;
 	}
 
 	auto* obj = osgDB::readObjectFile(argv[1]);
-	if (!obj) {
-		fprintf(stderr, "ktx2-skybox: failed to load '%s'\n", argv[1]);
+
+	if(!obj) {
+		std::fprintf(stderr, "ktx2-skybox: failed to load '%s'\n", argv[1]);
+
 		return 1;
 	}
 
 	auto* texcm = dynamic_cast<osg::TextureCubeMap*>(obj);
-	if (!texcm) {
-		fprintf(stderr, "ktx2-skybox: '%s' is not a TextureCubeMap (got %s)\n",
-			argv[1], obj->className());
+
+	if(!texcm) {
+		std::fprintf(
+			stderr, "ktx2-skybox: '%s' is not a TextureCubeMap (got %s)\n",
+			argv[1],
+			obj->className()
+		);
+
 		return 1;
 	}
 
 	int maxMip = 0;
-	if (auto* img = texcm->getImage(0)) {
+
+	if(auto* img = texcm->getImage(0)) {
 		int numMips = (int)img->getNumMipmapLevels();
 		maxMip = std::max(0, numMips - 1);
-		printf("ktx2-skybox: loaded '%s' %dx%d %d mip levels\n",
-			argv[1], img->s(), img->t(), numMips);
-	} else {
-		printf("ktx2-skybox: loaded '%s' (no image data on face 0)\n", argv[1]);
+
+		std::printf(
+			"ktx2-skybox: loaded '%s' %dx%d %d mip levels\n",
+			argv[1],
+			img->s(),
+			img->t(),
+			numMips
+		);
+	}
+
+	else {
+		std::printf("ktx2-skybox: loaded '%s' (no image data on face 0)\n", argv[1]);
 	}
 
 	texcm->setUnRefImageDataAfterApply(false);
@@ -244,13 +263,17 @@ int main(int argc, char* argv[])
 
 	// ---- Skybox mode ----
 	auto* skyGeode = new osg::Geode();
+
 	skyGeode->addDrawable(new osg::ShapeDrawable(new osg::Box(osg::Vec3(), 200.0f)));
+
 	{
 		auto* prog = new osg::Program();
+
 		prog->addShader(new osg::Shader(osg::Shader::VERTEX, SKYBOX_VERT));
 		prog->addShader(new osg::Shader(osg::Shader::FRAGMENT, SKYBOX_FRAG));
 
 		auto* ss = skyGeode->getOrCreateStateSet();
+
 		ss->setMode(GL_CULL_FACE, osg::StateAttribute::OFF | osg::StateAttribute::OVERRIDE);
 		ss->setMode(GL_DEPTH_TEST, osg::StateAttribute::OFF | osg::StateAttribute::OVERRIDE);
 		ss->setMode(GL_TEXTURE_CUBE_MAP_SEAMLESS, osg::StateAttribute::ON);
@@ -262,14 +285,18 @@ int main(int argc, char* argv[])
 
 	// ---- Cross mode ----
 	auto* crossGeode = new osg::Geode();
+
 	crossGeode->addDrawable(buildCrossGeometry());
+
 	{
 		auto* prog = new osg::Program();
+
 		prog->addShader(new osg::Shader(osg::Shader::VERTEX, CROSS_VERT));
 		prog->addShader(new osg::Shader(osg::Shader::FRAGMENT, SKYBOX_FRAG));
 		prog->addBindAttribLocation("faceDir", 1);
 
 		auto* ss = crossGeode->getOrCreateStateSet();
+
 		ss->setMode(GL_CULL_FACE, osg::StateAttribute::OFF | osg::StateAttribute::OVERRIDE);
 		ss->setMode(GL_DEPTH_TEST, osg::StateAttribute::OFF | osg::StateAttribute::OVERRIDE);
 		ss->setMode(GL_TEXTURE_CUBE_MAP_SEAMLESS, osg::StateAttribute::ON);
@@ -280,18 +307,19 @@ int main(int argc, char* argv[])
 	}
 
 	auto* sw = new osg::Switch();
+
 	sw->addChild(skyGeode, true); // 0 = skybox (default)
 	sw->addChild(crossGeode, false); // 1 = cross
 
 	osgViewer::Viewer viewer;
+
 	viewer.setSceneData(sw);
 	viewer.addEventHandler(new osgViewer::StatsHandler());
 	viewer.addEventHandler(new MipHandler(mipUniform, maxMip));
 	viewer.addEventHandler(new ModeHandler(sw));
 
-	printf("Controls: +/- or scroll to step mip levels (0 = sharpest, %d = roughest)\n", maxMip);
-	printf(" 'c' to toggle flat-cross display\n");
+	std::printf("Controls: +/- or scroll to step mip levels (0 = sharpest, %d = roughest)\n", maxMip);
+	std::printf(" 'c' to toggle flat-cross display\n");
 
-	viewer.run();
-	return 0;
+	return viewer.run();
 }
