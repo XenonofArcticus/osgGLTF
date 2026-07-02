@@ -8,7 +8,6 @@ find_package(OpenSceneGraph REQUIRED
 	osgViewer
 	osgGA
 	osgUtil
-	osgAnimation
 )
 
 # ---------------------------------------------------------------------------

@@ -12,9 +12,6 @@
 #include <osg/StateSet>
 #include <osg/Texture2D>
 #include <osg/Viewport>
-#include <osgDB/ReadFile>
-#include <osgDB/WriteFile>
-#include <osgViewer/Viewer>
 
 #include <algorithm>
 #include <cstdlib>
@@ -224,104 +221,9 @@ osg::ref_ptr<osg::TextureCubeMap> makePrefilterBake(
 	return prefilterTex;
 }
 
-class ReadbackCallback: public osg::Camera::DrawCallback {
-public:
-	ReadbackCallback(osg::TextureCubeMap* tex, int size, int mips, int trigger):
-	srcTex(tex),
-	prefilterSize(size),
-	numMips(mips),
-	triggerFrame(trigger) {
-		result = new osg::TextureCubeMap();
-	}
+}
 
-	// TODO: Why are we calling RAW GL functions here?!
-	void operator()(osg::RenderInfo& ri) const override {
-		auto* self = const_cast<ReadbackCallback*>(this);
-
-		if(self->done) return;
-		if(++self->frameCount < triggerFrame) return;
-
-		auto* texObj = srcTex->getTextureObject(ri.getContextID());
-
-		if(!texObj) {
-			OSG_WARN << "osgGLTF: prefilter texture not on GPU yet; retrying next frame\n";
-
-			return;
-		}
-
-		glFinish();
-		glBindTexture(GL_TEXTURE_CUBE_MAP, texObj->id());
-
-		GLint prevAlign = 4;
-
-		glGetIntegerv(GL_PACK_ALIGNMENT, &prevAlign);
-		glPixelStorei(GL_PACK_ALIGNMENT, 1);
-
-		for(int face = 0; face < 6; ++face) {
-			size_t totalBytes = 0;
-
-			for(int mip = 0; mip < numMips; ++mip) {
-				int s = std::max(1, prefilterSize >> mip);
-
-				totalBytes += size_t(s) * size_t(s) * 3u * 2u;
-			}
-
-			auto* buf = new unsigned char[totalBytes];
-
-			osg::Image::MipmapDataType offsets;
-			size_t off = 0;
-
-			for(int mip = 0; mip < numMips; ++mip) {
-				int s = std::max(1, prefilterSize >> mip);
-				size_t mipBytes = size_t(s) * size_t(s) * 3u * 2u;
-
-				if(mip > 0) offsets.push_back(static_cast<unsigned int>(off));
-
-				glGetTexImage(
-					GL_TEXTURE_CUBE_MAP_POSITIVE_X + face,
-					mip,
-					GL_RGB,
-					GL_HALF_FLOAT,
-					buf + off
-				);
-
-				off += mipBytes;
-			}
-
-			auto* img = new osg::Image();
-
-			img->setImage(
-				prefilterSize,
-				prefilterSize,
-				1,
-				GL_RGB16F,
-				GL_RGB,
-				GL_HALF_FLOAT,
-				buf,
-				osg::Image::USE_NEW_DELETE
-			);
-
-			if(!offsets.empty()) img->setMipmapLevels(offsets);
-
-			self->result->setImage(face, img);
-		}
-
-		glPixelStorei(GL_PACK_ALIGNMENT, prevAlign);
-		glBindTexture(GL_TEXTURE_CUBE_MAP, 0);
-
-		self->done = true;
-	}
-
-	osg::TextureCubeMap* srcTex = nullptr;
-	int prefilterSize = 0;
-	int numMips = 0;
-	int triggerFrame = 0;
-	mutable int frameCount = 0;
-	osg::ref_ptr<osg::TextureCubeMap> result;
-	bool done = false;
-};
-
-void configureGLContext() {
+void configureIBLGLContext() {
 #if defined(_WIN32)
 	_putenv("OSG_GL_CONTEXT_PROFILE_MASK=1");
 	_putenv("OSG_GL_VERSION=4.6");
@@ -335,18 +237,99 @@ void configureGLContext() {
 #endif
 }
 
+IBLReadback::IBLReadback(osg::TextureCubeMap* tex, int size, int mips, int trigger):
+srcTex(tex),
+prefilterSize(size),
+numMips(mips),
+triggerFrame(trigger) {
+	result = new osg::TextureCubeMap();
 }
 
-osg::ref_ptr<osg::TextureCubeMap> bakeSpecularIBL(
-	osg::Image* equirectImage,
-	const IBLBakeOptions& options
-) {
-	if(!equirectImage) return nullptr;
+// TODO: Why are we calling RAW GL functions here?!
+void IBLReadback::operator()(osg::RenderInfo& ri) const {
+	auto* self = const_cast<IBLReadback*>(this);
+
+	if(self->done) return;
+	if(++self->frameCount < triggerFrame) return;
+
+	auto* texObj = srcTex->getTextureObject(ri.getContextID());
+
+	if(!texObj) {
+		OSG_WARN << "osgGLTF: prefilter texture not on GPU yet; retrying next frame\n";
+
+		return;
+	}
+
+	glFinish();
+	glBindTexture(GL_TEXTURE_CUBE_MAP, texObj->id());
+
+	GLint prevAlign = 4;
+
+	glGetIntegerv(GL_PACK_ALIGNMENT, &prevAlign);
+	glPixelStorei(GL_PACK_ALIGNMENT, 1);
+
+	for(int face = 0; face < 6; ++face) {
+		size_t totalBytes = 0;
+
+		for(int mip = 0; mip < numMips; ++mip) {
+			int s = std::max(1, prefilterSize >> mip);
+
+			totalBytes += size_t(s) * size_t(s) * 3u * 2u;
+		}
+
+		auto* buf = new unsigned char[totalBytes];
+
+		osg::Image::MipmapDataType offsets;
+		size_t off = 0;
+
+		for(int mip = 0; mip < numMips; ++mip) {
+			int s = std::max(1, prefilterSize >> mip);
+			size_t mipBytes = size_t(s) * size_t(s) * 3u * 2u;
+
+			if(mip > 0) offsets.push_back(static_cast<unsigned int>(off));
+
+			glGetTexImage(
+				GL_TEXTURE_CUBE_MAP_POSITIVE_X + face,
+				mip,
+				GL_RGB,
+				GL_HALF_FLOAT,
+				buf + off
+			);
+
+			off += mipBytes;
+		}
+
+		auto* img = new osg::Image();
+
+		img->setImage(
+			prefilterSize,
+			prefilterSize,
+			1,
+			GL_RGB16F,
+			GL_RGB,
+			GL_HALF_FLOAT,
+			buf,
+			osg::Image::USE_NEW_DELETE
+		);
+
+		if(!offsets.empty()) img->setMipmapLevels(offsets);
+
+		self->result->setImage(face, img);
+	}
+
+	glPixelStorei(GL_PACK_ALIGNMENT, prevAlign);
+	glBindTexture(GL_TEXTURE_CUBE_MAP, 0);
+
+	self->done = true;
+}
+
+IBLBakeScene createIBLBakeScene(osg::Image* equirectImage, const IBLBakeOptions& options) {
+	IBLBakeScene scene;
+
+	if(!equirectImage) return scene;
 
 	const int prefilterSize = std::max(1, options.prefilterSize);
 	const int numMips = mipCountForSize(prefilterSize);
-
-	if(options.configureGLContext) configureGLContext();
 
 	auto* envTex = new osg::Texture2D();
 
@@ -365,63 +348,29 @@ osg::ref_ptr<osg::TextureCubeMap> bakeSpecularIBL(
 		equirectImage->t()
 	);
 
-	auto* readback = new ReadbackCallback(
+	scene.root = root;
+	scene.readback = new IBLReadback(
 		prefilterTex.get(),
 		prefilterSize,
 		numMips,
 		std::max(1, options.readbackFrame)
 	);
 
-	osgViewer::Viewer viewer;
-
-	viewer.setUpViewInWindow(0, 0, 128, 128);
-	viewer.setSceneData(root);
-	viewer.getCamera()->setPostDrawCallback(readback);
-
-	const int maxFrames = std::max(1, options.maxFrames);
-
-	for(int frame = 0; frame < maxFrames && !readback->done; ++frame) viewer.frame();
-
-	if(!readback->done) {
-		OSG_WARN << "osgGLTF: IBL bake readback did not complete\n";
-
-		return nullptr;
-	}
-
-	readback->result->setFilter(osg::Texture::MIN_FILTER, osg::Texture::LINEAR_MIPMAP_LINEAR);
-	readback->result->setFilter(osg::Texture::MAG_FILTER, osg::Texture::LINEAR);
-	readback->result->setWrap(osg::Texture::WRAP_S, osg::Texture::CLAMP_TO_EDGE);
-	readback->result->setWrap(osg::Texture::WRAP_T, osg::Texture::CLAMP_TO_EDGE);
-	readback->result->setWrap(osg::Texture::WRAP_R, osg::Texture::CLAMP_TO_EDGE);
-
-	return readback->result;
+	return scene;
 }
 
-osg::ref_ptr<osg::TextureCubeMap> bakeSpecularIBL(
-	const std::string& inputPath,
-	const IBLBakeOptions& options
-) {
-	osg::ref_ptr<osg::Image> image = osgDB::readImageFile(inputPath);
+osg::ref_ptr<osg::TextureCubeMap> finishIBLBake(IBLReadback* readback) {
+	if(!readback || !readback->isDone()) return nullptr;
 
-	if(!image) {
-		OSG_WARN << "osgGLTF: failed to load HDR image " << inputPath << "\n";
+	osg::TextureCubeMap* result = readback->getResult();
 
-		return nullptr;
-	}
+	result->setFilter(osg::Texture::MIN_FILTER, osg::Texture::LINEAR_MIPMAP_LINEAR);
+	result->setFilter(osg::Texture::MAG_FILTER, osg::Texture::LINEAR);
+	result->setWrap(osg::Texture::WRAP_S, osg::Texture::CLAMP_TO_EDGE);
+	result->setWrap(osg::Texture::WRAP_T, osg::Texture::CLAMP_TO_EDGE);
+	result->setWrap(osg::Texture::WRAP_R, osg::Texture::CLAMP_TO_EDGE);
 
-	return bakeSpecularIBL(image.get(), options);
-}
-
-bool bakeSpecularIBLToKTX2(
-	const std::string& inputPath,
-	const std::string& outputPath,
-	const IBLBakeOptions& options
-) {
-	osg::ref_ptr<osg::TextureCubeMap> result = bakeSpecularIBL(inputPath, options);
-
-	if(!result) return false;
-
-	return osgDB::writeObjectFile(*result, outputPath);
+	return result;
 }
 
 }
