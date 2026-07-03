@@ -154,6 +154,21 @@ int mipCountForSize(int size) {
 	return std::max(1, count);
 }
 
+void updateBakeSourceUniforms(osg::Node* node, int eqW, int eqH) {
+	if(!node) return;
+
+	if(auto* ss = node->getStateSet()) {
+		if(auto* u = ss->getUniform("equirectWidth")) u->set(eqW);
+		if(auto* u = ss->getUniform("equirectHeight")) u->set(eqH);
+	}
+
+	if(auto* group = node->asGroup()) {
+		for(unsigned int i = 0; i < group->getNumChildren(); ++i) {
+			updateBakeSourceUniforms(group->getChild(i), eqW, eqH);
+		}
+	}
+}
+
 osg::ref_ptr<osg::TextureCubeMap> makePrefilterBake(
 	osg::Texture2D* srcEquirect,
 	osg::Group* root,
@@ -230,11 +245,18 @@ sync(syncBeforeRead) {
 	result = new osg::TextureCubeMap();
 }
 
+void IBLReadback::reset() {
+	frameCount = 0;
+	done = false;
+	result = new osg::TextureCubeMap();
+}
+
 void IBLReadback::operator()(osg::RenderInfo& ri) const {
 	auto* self = const_cast<IBLReadback*>(this);
 
 	if(self->done) return;
 	if(++self->frameCount < triggerFrame) return;
+	if(!srcTex) return;
 
 	auto* texObj = srcTex->getTextureObject(ri.getContextID());
 
@@ -287,6 +309,8 @@ IBLBakeScene createIBLBakeScene(osg::Image* equirectImage, const IBLBakeOptions&
 	);
 
 	scene.root = root;
+	scene.sourceTexture = envTex;
+	scene.prefilterTexture = prefilterTex;
 	scene.readback = new IBLReadback(
 		prefilterTex.get(),
 		std::max(1, options.readbackFrame),
@@ -294,6 +318,19 @@ IBLBakeScene createIBLBakeScene(osg::Image* equirectImage, const IBLBakeOptions&
 	);
 
 	return scene;
+}
+
+bool rebakeIBLBakeScene(IBLBakeScene& scene, osg::Image* equirectImage) {
+	if(!scene.root || !scene.sourceTexture || !scene.readback || !equirectImage) {
+		return false;
+	}
+
+	scene.sourceTexture->setImage(equirectImage);
+	scene.sourceTexture->dirtyTextureObject();
+	updateBakeSourceUniforms(scene.root.get(), equirectImage->s(), equirectImage->t());
+	scene.readback->reset();
+
+	return true;
 }
 
 osg::ref_ptr<osg::TextureCubeMap> finishIBLBake(IBLReadback* readback) {

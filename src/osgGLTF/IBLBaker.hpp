@@ -2,6 +2,7 @@
 
 #include <osg/Camera>
 #include <osg/Group>
+#include <osg/Texture2D>
 #include <osg/TextureCubeMap>
 
 namespace osg { class Image; }
@@ -40,9 +41,10 @@ public:
 
 	bool isDone() const { return done; }
 	osg::TextureCubeMap* getResult() const { return result.get(); }
+	void reset();
 
 private:
-	osg::TextureCubeMap* srcTex = nullptr;
+	osg::ref_ptr<osg::TextureCubeMap> srcTex;
 	int triggerFrame = 0;
 	bool sync = true;
 	mutable int frameCount = 0;
@@ -52,6 +54,8 @@ private:
 
 struct IBLBakeScene {
 	osg::ref_ptr<osg::Group> root;
+	osg::ref_ptr<osg::Texture2D> sourceTexture;
+	osg::ref_ptr<osg::TextureCubeMap> prefilterTexture;
 	osg::ref_ptr<IBLReadback> readback;
 };
 
@@ -62,6 +66,10 @@ struct IBLBakeScene {
 // camera that will actually render frames, and running frames until
 // `readback->isDone()`.
 IBLBakeScene createIBLBakeScene(osg::Image* equirectImage, const IBLBakeOptions& options={});
+
+// Reuses an existing bake scene for a new equirectangular source image. This
+// avoids rebuilding all PRE_RENDER cameras/FBOs/programs for live rebakes.
+bool rebakeIBLBakeScene(IBLBakeScene& scene, osg::Image* equirectImage);
 
 // Applies the standard cubemap filter/wrap settings to a completed bake.
 // Only valid to call once `readback->isDone()`.

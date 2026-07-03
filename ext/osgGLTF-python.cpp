@@ -29,6 +29,7 @@ PYBIND11_MODULE(osgGLTF, m) {
 	>(m, "IBLReadback")
 		.def("isDone", &osgGLTF::IBLReadback::isDone)
 		.def("getResult", &osgGLTF::IBLReadback::getResult)
+		.def("reset", &osgGLTF::IBLReadback::reset)
 	;
 
 	py::class_<osgGLTF::IBLBakeScene>(m, "IBLBakeScene")
@@ -43,6 +44,7 @@ PYBIND11_MODULE(osgGLTF, m) {
 			"equirectImage"_a,
 			"options"_a=osgGLTF::IBLBakeOptions()
 		)
+		.def("rebakeIBLBakeScene", &osgGLTF::rebakeIBLBakeScene, "scene"_a, "equirectImage"_a)
 		.def("finishIBLBake", &osgGLTF::finishIBLBake, "readback"_a)
 	;
 
