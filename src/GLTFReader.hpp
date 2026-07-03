@@ -62,6 +62,9 @@ inline std::ostream& gltfNotify(osg::NotifySeverity severity, unsigned indent = 
 #define GLTF_NOTIFY(indent) \
 	if(osg::isNotifyEnabled(GLTF_NOTIFY_SEVERITY)) gltfNotify(GLTF_NOTIFY_SEVERITY, indent)
 
+#include "GLTFReader-Animation.hpp"
+#include "GLTFReader-Skin.hpp"
+
 class GLTFReader {
 public:
 	struct TextureCache {
@@ -239,6 +242,8 @@ public:
 		}
 
 		builder.resolveSkinJointNodes();
+		builder.installAnimationCallback(root);
+		builder.installSkinPaletteCallbacks();
 
 		root->getOrCreateStateSet()->setAttributeAndModes(
 			new osg::CullFace(osg::CullFace::BACK),
@@ -249,20 +254,11 @@ public:
 	}
 
 	struct NodeBuilder {
-		struct SkinData {
-			int index = -1;
-			std::string name;
-			std::vector<int> joints;
-			std::vector<osg::Matrixf> inverseBindMatrices;
-			std::vector<osg::observer_ptr<osg::MatrixTransform>> jointNodes;
-			int skeleton = -1;
-		};
-
 		const GLTFReader* reader;
 		const tinygltf::Model& model;
 		const Env& env;
 		std::vector<osg::ref_ptr<osg::Array>> arrays;
-		std::vector<SkinData> skins;
+		std::vector<osg::ref_ptr<GLTFSkin>> skins;
 		mutable std::vector<osg::observer_ptr<osg::MatrixTransform>> nodeTransforms;
 
 		NodeBuilder(const GLTFReader* r, const tinygltf::Model& m, const Env& e):
@@ -324,6 +320,12 @@ public:
 
 			nodeTransforms[nodeIdx] = mt;
 
+			if(
+				node.skin >= 0 &&
+				node.skin < static_cast<int>(skins.size()) &&
+				skins[node.skin].valid()
+			) skins[node.skin]->skinnedNodes.push_back(mt);
+
 			if(node.mesh >= 0) mt->addChild(makeMesh(model.meshes[node.mesh], node.skin));
 
 			for(int childIdx : node.children) {
@@ -340,14 +342,14 @@ public:
 
 			for(size_t skinIdx = 0; skinIdx < model.skins.size(); ++skinIdx) {
 				const tinygltf::Skin& src = model.skins[skinIdx];
-				SkinData skin;
+				osg::ref_ptr<GLTFSkin> skin = new GLTFSkin();
 
-				skin.index = static_cast<int>(skinIdx);
-				skin.name = src.name;
-				skin.joints = src.joints;
-				skin.skeleton = src.skeleton;
-				skin.inverseBindMatrices.resize(src.joints.size(), osg::Matrixf::identity());
-				skin.jointNodes.resize(src.joints.size());
+				skin->index = static_cast<int>(skinIdx);
+				skin->name = src.name;
+				skin->joints = src.joints;
+				skin->skeleton = src.skeleton;
+				skin->inverseBindMatrices.resize(src.joints.size(), osg::Matrixf::identity());
+				skin->jointNodes.resize(src.joints.size());
 
 				if(
 					src.inverseBindMatrices >= 0 &&
@@ -357,15 +359,15 @@ public:
 					auto* ibm = dynamic_cast<osg::MatrixfArray*>(arrays[src.inverseBindMatrices].get());
 
 					if(ibm) {
-						size_t count = std::min<size_t>(ibm->size(), skin.inverseBindMatrices.size());
+						size_t count = std::min<size_t>(ibm->size(), skin->inverseBindMatrices.size());
 
-						std::copy(ibm->begin(), ibm->begin() + count, skin.inverseBindMatrices.begin());
+						std::copy(ibm->begin(), ibm->begin() + count, skin->inverseBindMatrices.begin());
 
-						if(count != skin.inverseBindMatrices.size()) {
+						if(count != skin->inverseBindMatrices.size()) {
 							GLTF_NOTIFY(1)
 								<< "skin[" << skinIdx << "] inverseBindMatrices count "
 								<< count << " does not match joints count "
-								<< skin.inverseBindMatrices.size() << std::endl
+								<< skin->inverseBindMatrices.size() << std::endl
 							;
 						}
 					}
@@ -385,11 +387,13 @@ public:
 					;
 				}
 
+				skin->initPalette();
+
 				GLTF_NOTIFY(1)
-					<< "prepared skin[" << skinIdx << "] '" << skin.name << "'"
-					<< " joints=" << skin.joints.size()
-					<< " inverseBindMatrices=" << skin.inverseBindMatrices.size()
-					<< " skeleton=" << skin.skeleton << std::endl
+					<< "prepared skin[" << skinIdx << "] '" << skin->name << "'"
+					<< " joints=" << skin->joints.size()
+					<< " inverseBindMatrices=" << skin->inverseBindMatrices.size()
+					<< " skeleton=" << skin->skeleton << std::endl
 				;
 
 				skins.push_back(skin);
@@ -397,27 +401,242 @@ public:
 		}
 
 		void resolveSkinJointNodes() {
-			for(auto& skin : skins) {
+			for(auto& skinRef : skins) {
+				GLTFSkin* skin = skinRef.get();
+				if(!skin) continue;
+
 				size_t resolved = 0;
 
-				for(size_t jointIdx = 0; jointIdx < skin.joints.size(); ++jointIdx) {
-					int nodeIdx = skin.joints[jointIdx];
+				for(size_t jointIdx = 0; jointIdx < skin->joints.size(); ++jointIdx) {
+					int nodeIdx = skin->joints[jointIdx];
 
 					if(
 						nodeIdx >= 0 &&
 						nodeIdx < static_cast<int>(nodeTransforms.size()) &&
 						nodeTransforms[nodeIdx].valid()
 					) {
-						skin.jointNodes[jointIdx] = nodeTransforms[nodeIdx].get();
+						skin->jointNodes[jointIdx] = nodeTransforms[nodeIdx].get();
 						++resolved;
 					}
 				}
 
 				GLTF_NOTIFY(1)
-					<< "resolved skin[" << skin.index << "] joint nodes "
-					<< resolved << "/" << skin.joints.size() << std::endl
+					<< "resolved skin[" << skin->index << "] joint nodes "
+					<< resolved << "/" << skin->joints.size() << std::endl
 				;
 			}
+		}
+
+		void installSkinPaletteCallbacks() {
+			for(auto& skinRef : skins) {
+				GLTFSkin* skin = skinRef.get();
+				if(!skin || !skin->paletteMatrices) continue;
+
+				const auto totalSize = static_cast<GLsizeiptr>(
+					skin->paletteMatrices->getTotalDataSize()
+				);
+
+				for(auto& skinnedNodeRef : skin->skinnedNodes) {
+					osg::MatrixTransform* skinnedNode = skinnedNodeRef.get();
+
+					if(!skinnedNode) continue;
+
+					skinnedNode->addUpdateCallback(new GLTFSkinPaletteCallback(skin));
+
+					skinnedNode->getOrCreateStateSet()->setAttributeAndModes(
+						new osg::ShaderStorageBufferBinding(
+							GLTF_JOINT_MATRICES_BINDING,
+							skin->paletteMatrices.get(),
+							0,
+							totalSize
+						),
+						osg::StateAttribute::ON
+					);
+
+					skin->updatePalette(skinnedNode);
+
+					GLTF_NOTIFY(1)
+						<< "installed skin[" << skin->index << "] palette callback on '"
+						<< skinnedNode->getName() << "'"
+						<< " SSBO binding=" << GLTF_JOINT_MATRICES_BINDING
+						<< " bytes=" << totalSize << std::endl
+					;
+				}
+			}
+		}
+
+		void installAnimationCallback(osg::Node* root) const {
+			if(
+				env.readOptions &&
+				env.readOptions->getOptionString().find("gltfSkipAnimation") != std::string::npos
+			) {
+				GLTF_NOTIFY(1) << "animation disabled by gltfSkipAnimation option" << std::endl;
+				return;
+			}
+
+			if(!root || model.animations.empty()) return;
+
+			size_t animIdx = 0;
+
+			for(size_t i = 0; i < model.animations.size(); ++i) {
+				if(model.animations[i].name == "Walk") {
+					animIdx = i;
+					break;
+				}
+			}
+
+			const tinygltf::Animation& animation = model.animations[animIdx];
+			osg::ref_ptr<GLTFAnimationCallback> callback = new GLTFAnimationCallback();
+
+			callback->name = animation.name.empty()
+				? std::string("animation[") + std::to_string(animIdx) + "]"
+				: animation.name
+			;
+
+			for(size_t channelIdx = 0; channelIdx < animation.channels.size(); ++channelIdx) {
+				const tinygltf::AnimationChannel& gltfChannel = animation.channels[channelIdx];
+
+				if(
+					gltfChannel.sampler < 0 ||
+					gltfChannel.sampler >= static_cast<int>(animation.samplers.size())
+				) continue;
+
+				if(
+					gltfChannel.target_node < 0 ||
+					gltfChannel.target_node >= static_cast<int>(nodeTransforms.size()) ||
+					!nodeTransforms[gltfChannel.target_node].valid()
+				) continue;
+
+				const tinygltf::AnimationSampler& gltfSampler = animation.samplers[gltfChannel.sampler];
+
+				if(gltfSampler.interpolation == "CUBICSPLINE") {
+					GLTF_NOTIFY(2)
+						<< "animation '" << callback->name
+						<< "' channel[" << channelIdx << "] CUBICSPLINE skipped" << std::endl
+					;
+					continue;
+				}
+
+				GLTFAnimationCallback::Channel channel;
+
+				channel.target = nodeTransforms[gltfChannel.target_node].get();
+				channel.targetNode = gltfChannel.target_node;
+				channel.interpolation = gltfSampler.interpolation.empty()
+					? "LINEAR"
+					: gltfSampler.interpolation
+				;
+				channel.times = readFloatTimes(gltfSampler.input);
+
+				if(gltfChannel.target_path == "translation") {
+					channel.path = GLTFAnimationCallback::Path::Translation;
+					channel.vec3Values = readVec3Values(gltfSampler.output);
+				}
+
+				else if(gltfChannel.target_path == "rotation") {
+					channel.path = GLTFAnimationCallback::Path::Rotation;
+					channel.quatValues = readQuatValues(gltfSampler.output);
+				}
+
+				else if(gltfChannel.target_path == "scale") {
+					channel.path = GLTFAnimationCallback::Path::Scale;
+					channel.vec3Values = readVec3Values(gltfSampler.output);
+				}
+
+				else {
+					GLTF_NOTIFY(2)
+						<< "animation '" << callback->name
+						<< "' channel[" << channelIdx << "] path '"
+						<< gltfChannel.target_path << "' skipped" << std::endl
+					;
+					continue;
+				}
+
+				if(channel.times.empty()) continue;
+
+				if(
+					channel.path == GLTFAnimationCallback::Path::Rotation &&
+					channel.quatValues.size() != channel.times.size()
+				) continue;
+
+				if(
+					channel.path != GLTFAnimationCallback::Path::Rotation &&
+					channel.vec3Values.size() != channel.times.size()
+				) continue;
+
+				callback->duration = std::max<double>(callback->duration, channel.times.back());
+				callback->baseTRS.emplace(
+					gltfChannel.target_node,
+					gltfNodeBaseTRS(model.nodes[gltfChannel.target_node])
+				);
+				callback->channels.push_back(std::move(channel));
+			}
+
+			if(callback->channels.empty()) {
+				GLTF_NOTIFY(1) << "animation '" << callback->name << "' has no supported channels" << std::endl;
+				return;
+			}
+
+			root->addUpdateCallback(callback.get());
+
+			GLTF_NOTIFY(1)
+				<< "installed animation '" << callback->name << "'"
+				<< " channels=" << callback->channels.size()
+				<< " duration=" << callback->duration << std::endl
+			;
+		}
+
+		std::vector<float> readFloatTimes(int accessorIdx) const {
+			if(
+				accessorIdx < 0 ||
+				accessorIdx >= static_cast<int>(arrays.size()) ||
+				!arrays[accessorIdx].valid()
+			) return {};
+
+			auto* src = dynamic_cast<osg::FloatArray*>(arrays[accessorIdx].get());
+
+			if(!src) return {};
+
+			return std::vector<float>(src->begin(), src->end());
+		}
+
+		std::vector<osg::Vec3d> readVec3Values(int accessorIdx) const {
+			if(
+				accessorIdx < 0 ||
+				accessorIdx >= static_cast<int>(arrays.size()) ||
+				!arrays[accessorIdx].valid()
+			) return {};
+
+			auto* src = dynamic_cast<osg::Vec3Array*>(arrays[accessorIdx].get());
+
+			if(!src) return {};
+
+			std::vector<osg::Vec3d> values;
+
+			values.reserve(src->size());
+
+			for(const osg::Vec3& v : *src) values.emplace_back(v.x(), v.y(), v.z());
+
+			return values;
+		}
+
+		std::vector<osg::Quat> readQuatValues(int accessorIdx) const {
+			if(
+				accessorIdx < 0 ||
+				accessorIdx >= static_cast<int>(arrays.size()) ||
+				!arrays[accessorIdx].valid()
+			) return {};
+
+			auto* src = dynamic_cast<osg::Vec4Array*>(arrays[accessorIdx].get());
+
+			if(!src) return {};
+
+			std::vector<osg::Quat> values;
+
+			values.reserve(src->size());
+
+			for(const osg::Vec4& v : *src) values.emplace_back(v.x(), v.y(), v.z(), v.w());
+
+			return values;
 		}
 
 		osg::Group* makeMesh(const tinygltf::Mesh& mesh, int skinIdx) const {
