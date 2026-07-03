@@ -326,7 +326,6 @@ bool rebakeIBLBakeScene(IBLBakeScene& scene, osg::Image* equirectImage) {
 	}
 
 	scene.sourceTexture->setImage(equirectImage);
-	scene.sourceTexture->dirtyTextureObject();
 	updateBakeSourceUniforms(scene.root.get(), equirectImage->s(), equirectImage->t());
 	scene.readback->reset();
 
