@@ -234,9 +234,11 @@ public:
 
 		for(auto& scene : model.scenes) {
 			for(int idx : scene.nodes) {
-				if(osg::Node* n = builder.createNode(model.nodes[idx])) root->addChild(n);
+				if(osg::Node* n = builder.createNode(idx)) root->addChild(n);
 			}
 		}
+
+		builder.resolveSkinJointNodes();
 
 		root->getOrCreateStateSet()->setAttributeAndModes(
 			new osg::CullFace(osg::CullFace::BACK),
@@ -247,25 +249,45 @@ public:
 	}
 
 	struct NodeBuilder {
+		struct SkinData {
+			int index = -1;
+			std::string name;
+			std::vector<int> joints;
+			std::vector<osg::Matrixf> inverseBindMatrices;
+			std::vector<osg::observer_ptr<osg::MatrixTransform>> jointNodes;
+			int skeleton = -1;
+		};
+
 		const GLTFReader* reader;
 		const tinygltf::Model& model;
 		const Env& env;
 		std::vector<osg::ref_ptr<osg::Array>> arrays;
+		std::vector<SkinData> skins;
+		mutable std::vector<osg::observer_ptr<osg::MatrixTransform>> nodeTransforms;
 
 		NodeBuilder(const GLTFReader* r, const tinygltf::Model& m, const Env& e):
 		reader(r),
 		model(m),
 		env(e) {
+			nodeTransforms.resize(m.nodes.size());
+
 			GLTF_NOTIFY(0) << "extractArrays -- " << m.accessors.size() << " accessor(s)" << std::endl;
 
 			extractArrays();
 
 			GLTF_NOTIFY(0) << "extractArrays done -- " << arrays.size() << " array(s) built" << std::endl;
+
+			prepareSkins();
 		}
 
-		osg::Node* createNode(const tinygltf::Node& node, unsigned depth = 0) const {
+		osg::Node* createNode(int nodeIdx, unsigned depth = 0) const {
+			if(nodeIdx < 0 || nodeIdx >= static_cast<int>(model.nodes.size())) return nullptr;
+
+			const tinygltf::Node& node = model.nodes[nodeIdx];
+
 			GLTF_NOTIFY(depth)
 				<< "createNode '" << node.name << "'"
+				<< " node=" << nodeIdx
 				<< " mesh=" << node.mesh
 				<< " skin=" << node.skin
 				<< " children=" << node.children.size() << std::endl
@@ -300,10 +322,12 @@ public:
 				mt->setMatrix(S * R * T);
 			}
 
-			if(node.mesh >= 0) mt->addChild(makeMesh(model.meshes[node.mesh]));
+			nodeTransforms[nodeIdx] = mt;
+
+			if(node.mesh >= 0) mt->addChild(makeMesh(model.meshes[node.mesh], node.skin));
 
 			for(int childIdx : node.children) {
-				if(osg::Node* c = createNode(model.nodes[childIdx], depth + 1)) mt->addChild(c);
+				if(osg::Node* c = createNode(childIdx, depth + 1)) mt->addChild(c);
 			}
 
 			mt->setName(node.name);
@@ -311,10 +335,96 @@ public:
 			return mt;
 		}
 
-		osg::Group* makeMesh(const tinygltf::Mesh& mesh) const {
+		void prepareSkins() {
+			skins.reserve(model.skins.size());
+
+			for(size_t skinIdx = 0; skinIdx < model.skins.size(); ++skinIdx) {
+				const tinygltf::Skin& src = model.skins[skinIdx];
+				SkinData skin;
+
+				skin.index = static_cast<int>(skinIdx);
+				skin.name = src.name;
+				skin.joints = src.joints;
+				skin.skeleton = src.skeleton;
+				skin.inverseBindMatrices.resize(src.joints.size(), osg::Matrixf::identity());
+				skin.jointNodes.resize(src.joints.size());
+
+				if(
+					src.inverseBindMatrices >= 0 &&
+					src.inverseBindMatrices < static_cast<int>(arrays.size()) &&
+					arrays[src.inverseBindMatrices].valid()
+				) {
+					auto* ibm = dynamic_cast<osg::MatrixfArray*>(arrays[src.inverseBindMatrices].get());
+
+					if(ibm) {
+						size_t count = std::min<size_t>(ibm->size(), skin.inverseBindMatrices.size());
+
+						std::copy(ibm->begin(), ibm->begin() + count, skin.inverseBindMatrices.begin());
+
+						if(count != skin.inverseBindMatrices.size()) {
+							GLTF_NOTIFY(1)
+								<< "skin[" << skinIdx << "] inverseBindMatrices count "
+								<< count << " does not match joints count "
+								<< skin.inverseBindMatrices.size() << std::endl
+							;
+						}
+					}
+
+					else {
+						GLTF_NOTIFY(1)
+							<< "skin[" << skinIdx << "] inverseBindMatrices accessor "
+							<< src.inverseBindMatrices << " is not a MatrixfArray" << std::endl
+						;
+					}
+				}
+
+				else if(src.inverseBindMatrices >= 0) {
+					GLTF_NOTIFY(1)
+						<< "skin[" << skinIdx << "] inverseBindMatrices accessor "
+						<< src.inverseBindMatrices << " is unavailable" << std::endl
+					;
+				}
+
+				GLTF_NOTIFY(1)
+					<< "prepared skin[" << skinIdx << "] '" << skin.name << "'"
+					<< " joints=" << skin.joints.size()
+					<< " inverseBindMatrices=" << skin.inverseBindMatrices.size()
+					<< " skeleton=" << skin.skeleton << std::endl
+				;
+
+				skins.push_back(skin);
+			}
+		}
+
+		void resolveSkinJointNodes() {
+			for(auto& skin : skins) {
+				size_t resolved = 0;
+
+				for(size_t jointIdx = 0; jointIdx < skin.joints.size(); ++jointIdx) {
+					int nodeIdx = skin.joints[jointIdx];
+
+					if(
+						nodeIdx >= 0 &&
+						nodeIdx < static_cast<int>(nodeTransforms.size()) &&
+						nodeTransforms[nodeIdx].valid()
+					) {
+						skin.jointNodes[jointIdx] = nodeTransforms[nodeIdx].get();
+						++resolved;
+					}
+				}
+
+				GLTF_NOTIFY(1)
+					<< "resolved skin[" << skin.index << "] joint nodes "
+					<< resolved << "/" << skin.joints.size() << std::endl
+				;
+			}
+		}
+
+		osg::Group* makeMesh(const tinygltf::Mesh& mesh, int skinIdx) const {
 			GLTF_NOTIFY(1)
 				<< "makeMesh '" << mesh.name
-				<< "' -- " << mesh.primitives.size() << " primitive(s)" << std::endl
+				<< "' skin=" << skinIdx
+				<< " -- " << mesh.primitives.size() << " primitive(s)" << std::endl
 			;
 
 			osg::Group* group = new osg::Group();
@@ -387,6 +497,26 @@ public:
 						<< " JOINTS_0=" << jointsAccessor
 						<< " WEIGHTS_0=" << weightsAccessor << std::endl
 					;
+
+					if(skinIdx >= 0 && skinIdx < static_cast<int>(skins.size())) {
+						if(jointsAccessor >= 0) {
+							arrays[jointsAccessor]->setBinding(osg::Array::BIND_PER_VERTEX);
+							arrays[jointsAccessor]->setPreserveDataType(true);
+							geom->setVertexAttribArray(8, arrays[jointsAccessor].get());
+						}
+
+						if(weightsAccessor >= 0) {
+							arrays[weightsAccessor]->setBinding(osg::Array::BIND_PER_VERTEX);
+							geom->setVertexAttribArray(9, arrays[weightsAccessor].get());
+						}
+					}
+
+					else {
+						GLTF_NOTIFY(3)
+							<< "skinning attrs present, but node has no valid skin; not binding them"
+							<< std::endl
+						;
+					}
 				}
 
 				if(
@@ -1410,6 +1540,7 @@ public:
 					case TINYGLTF_TYPE_VEC2: a = MAKE(osg::Vec2Array, TINYGLTF_COMPONENT_TYPE_FLOAT, TINYGLTF_TYPE_VEC2); break;
 					case TINYGLTF_TYPE_VEC3: a = MAKE(osg::Vec3Array, TINYGLTF_COMPONENT_TYPE_FLOAT, TINYGLTF_TYPE_VEC3); break;
 					case TINYGLTF_TYPE_VEC4: a = MAKE(osg::Vec4Array, TINYGLTF_COMPONENT_TYPE_FLOAT, TINYGLTF_TYPE_VEC4); break;
+					case TINYGLTF_TYPE_MAT4: a = MAKE(osg::MatrixfArray, TINYGLTF_COMPONENT_TYPE_FLOAT, TINYGLTF_TYPE_MAT4); break;
 					default: break; } break;
 
 				default:
