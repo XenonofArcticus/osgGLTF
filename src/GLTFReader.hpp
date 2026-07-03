@@ -135,9 +135,85 @@ public:
 			<< model.images.size() << " image(s)" << std::endl
 		;
 
+		logAnimationBits(model);
+
 		Env env(location, readOptions);
 
 		return makeNodeFromModel(model, env);
+	}
+
+	void logAnimationBits(const tinygltf::Model& model) const {
+		if(model.skins.empty() && model.animations.empty()) return;
+
+		GLTF_NOTIFY(0)
+			<< model.skins.size() << " skin(s), "
+			<< model.animations.size() << " animation(s)" << std::endl
+		;
+
+		for(size_t skinIdx = 0; skinIdx < model.skins.size(); ++skinIdx) {
+			const auto& skin = model.skins[skinIdx];
+
+			GLTF_NOTIFY(1)
+				<< "skin[" << skinIdx << "] '" << skin.name << "'"
+				<< " joints=" << skin.joints.size()
+				<< " skeleton=" << skin.skeleton
+				<< " inverseBindMatrices=" << skin.inverseBindMatrices << std::endl
+			;
+
+			for(size_t jointIdx = 0; jointIdx < skin.joints.size(); ++jointIdx) {
+				int nodeIdx = skin.joints[jointIdx];
+				const char* nodeName =
+					nodeIdx >= 0 && nodeIdx < static_cast<int>(model.nodes.size())
+					? model.nodes[nodeIdx].name.c_str()
+					: ""
+				;
+
+				GLTF_NOTIFY(2)
+					<< "joint[" << jointIdx << "]"
+					<< " node=" << nodeIdx
+					<< " '" << nodeName << "'" << std::endl
+				;
+			}
+		}
+
+		for(size_t animIdx = 0; animIdx < model.animations.size(); ++animIdx) {
+			const auto& animation = model.animations[animIdx];
+
+			GLTF_NOTIFY(1)
+				<< "animation[" << animIdx << "] '" << animation.name << "'"
+				<< " channels=" << animation.channels.size()
+				<< " samplers=" << animation.samplers.size() << std::endl
+			;
+
+			for(size_t samplerIdx = 0; samplerIdx < animation.samplers.size(); ++samplerIdx) {
+				const auto& sampler = animation.samplers[samplerIdx];
+
+				GLTF_NOTIFY(2)
+					<< "sampler[" << samplerIdx << "]"
+					<< " input=" << sampler.input
+					<< " output=" << sampler.output
+					<< " interpolation=" << sampler.interpolation << std::endl
+				;
+			}
+
+			for(size_t channelIdx = 0; channelIdx < animation.channels.size(); ++channelIdx) {
+				const auto& channel = animation.channels[channelIdx];
+				const char* nodeName =
+					channel.target_node >= 0 &&
+					channel.target_node < static_cast<int>(model.nodes.size())
+					? model.nodes[channel.target_node].name.c_str()
+					: ""
+				;
+
+				GLTF_NOTIFY(2)
+					<< "channel[" << channelIdx << "]"
+					<< " sampler=" << channel.sampler
+					<< " targetNode=" << channel.target_node
+					<< " '" << nodeName << "'"
+					<< " path=" << channel.target_path << std::endl
+				;
+			}
+		}
 	}
 
 	osg::Node* makeNodeFromModel(const tinygltf::Model& model, const Env& env) const {
@@ -191,6 +267,7 @@ public:
 			GLTF_NOTIFY(depth)
 				<< "createNode '" << node.name << "'"
 				<< " mesh=" << node.mesh
+				<< " skin=" << node.skin
 				<< " children=" << node.children.size() << std::endl
 			;
 
@@ -268,6 +345,8 @@ public:
 				GLTF_NOTIFY(3) << "attributes:" << std::endl;
 
 				std::map<int, osg::Array*> texCoordSets;
+				int jointsAccessor = -1;
+				int weightsAccessor = -1;
 
 				for(auto& [attrName, accessorIdx] : primitive.attributes) {
 					bool valid =
@@ -297,6 +376,17 @@ public:
 
 						texCoordSets[uvSet] = arrays[accessorIdx].get();
 					}
+
+					else if(attrName == "JOINTS_0") jointsAccessor = accessorIdx;
+					else if(attrName == "WEIGHTS_0") weightsAccessor = accessorIdx;
+				}
+
+				if(jointsAccessor >= 0 || weightsAccessor >= 0) {
+					GLTF_NOTIFY(3)
+						<< "skinning attrs:"
+						<< " JOINTS_0=" << jointsAccessor
+						<< " WEIGHTS_0=" << weightsAccessor << std::endl
+					;
 				}
 
 				if(
