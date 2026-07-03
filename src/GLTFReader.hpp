@@ -35,6 +35,7 @@
 #include <cstdlib>
 #include <map>
 #include <mutex>
+#include <ostream>
 #include <unordered_map>
 #include <string>
 
@@ -47,8 +48,19 @@
 # define GL_SRGB8_ALPHA8 0x8C43
 #endif
 
-// Change this to GLTF_NOTIFY or GLTF_NOTIFY to reduce verbosity.
-#define GLTF_NOTIFY OSG_NOTICE
+// Change this to osg::INFO/osg::DEBUG_INFO/etc. to reduce verbosity.
+#define GLTF_NOTIFY_SEVERITY osg::NOTICE
+
+inline std::ostream& gltfNotify(osg::NotifySeverity severity, unsigned indent = 0) {
+	std::ostream& out = osg::notify(severity) << "[GLTF] ";
+
+	for(unsigned i = 0; i < indent; ++i) out << "  ";
+
+	return out;
+}
+
+#define GLTF_NOTIFY(indent) \
+	if(osg::isNotifyEnabled(GLTF_NOTIFY_SEVERITY)) gltfNotify(GLTF_NOTIFY_SEVERITY, indent)
 
 class GLTFReader {
 public:
@@ -71,7 +83,7 @@ public:
 	void setTextureCache(TextureCache* cache) const { _texCache = cache; }
 
 	static std::string ExpandFilePath(const std::string& filepath, void* userData) {
-		const std::string& referrer = *(const std::string*)userData;
+		const std::string& referrer = *static_cast<const std::string*>(userData);
 
 		std::string path = osgDB::getRealPath(
 			osgDB::isAbsolutePath(filepath) ? filepath :
@@ -96,27 +108,26 @@ public:
 		fs.ExpandFilePath = &GLTFReader::ExpandFilePath;
 		fs.ReadWholeFile = &tinygltf::ReadWholeFile;
 		fs.WriteWholeFile = &tinygltf::WriteWholeFile;
-		fs.user_data = (void*)&location;
+		fs.user_data = const_cast<std::string*>(&location);
 
 		loader.SetFsCallbacks(fs);
 
-		GLTF_NOTIFY << "[GLTFReader] loading " << location << std::endl;
+		GLTF_NOTIFY(0) << "loading " << location << std::endl;
 
 		bool ok = isBinary
 			? loader.LoadBinaryFromFile(&model, &err, &warn, location)
 			: loader.LoadASCIIFromFile (&model, &err, &warn, location)
 		;
 
-		if(!warn.empty()) OSG_WARN << "[GLTFReader] " << location << ": " << warn << std::endl;
+		if(!warn.empty()) OSG_WARN << "" << location << ": " << warn << std::endl;
 
 		if(!ok || !err.empty()) {
-			OSG_WARN << "[GLTFReader] failed to load " << location << ": " << err << std::endl;
+			OSG_WARN << "failed to load " << location << ": " << err << std::endl;
 
 			return osgDB::ReaderWriter::ReadResult::ERROR_IN_READING_FILE;
 		}
 
-		GLTF_NOTIFY
-			<< "[GLTFReader] parsed ok -- "
+		GLTF_NOTIFY(0)
 			<< model.meshes.size() << " mesh(es), "
 			<< model.accessors.size() << " accessor(s), "
 			<< model.bufferViews.size()<< " bufferView(s), "
@@ -169,16 +180,16 @@ public:
 		reader(r),
 		model(m),
 		env(e) {
-			GLTF_NOTIFY << "[GLTFReader] extractArrays -- " << m.accessors.size() << " accessor(s)" << std::endl;
+			GLTF_NOTIFY(0) << "extractArrays -- " << m.accessors.size() << " accessor(s)" << std::endl;
 
 			extractArrays();
 
-			GLTF_NOTIFY << "[GLTFReader] extractArrays done -- " << arrays.size() << " array(s) built" << std::endl;
+			GLTF_NOTIFY(0) << "extractArrays done -- " << arrays.size() << " array(s) built" << std::endl;
 		}
 
-		osg::Node* createNode(const tinygltf::Node& node) const {
-			GLTF_NOTIFY
-				<< "[GLTFReader] createNode '" << node.name << "'"
+		osg::Node* createNode(const tinygltf::Node& node, unsigned depth = 0) const {
+			GLTF_NOTIFY(depth)
+				<< "createNode '" << node.name << "'"
 				<< " mesh=" << node.mesh
 				<< " children=" << node.children.size() << std::endl
 			;
@@ -215,7 +226,7 @@ public:
 			if(node.mesh >= 0) mt->addChild(makeMesh(model.meshes[node.mesh]));
 
 			for(int childIdx : node.children) {
-				if(osg::Node* c = createNode(model.nodes[childIdx])) mt->addChild(c);
+				if(osg::Node* c = createNode(model.nodes[childIdx], depth + 1)) mt->addChild(c);
 			}
 
 			mt->setName(node.name);
@@ -224,8 +235,8 @@ public:
 		}
 
 		osg::Group* makeMesh(const tinygltf::Mesh& mesh) const {
-			GLTF_NOTIFY
-				<< "[GLTFReader] makeMesh '" << mesh.name
+			GLTF_NOTIFY(1)
+				<< "makeMesh '" << mesh.name
 				<< "' -- " << mesh.primitives.size() << " primitive(s)" << std::endl
 			;
 
@@ -236,8 +247,8 @@ public:
 			int primIdx = 0;
 
 			for(auto& primitive : mesh.primitives) {
-				GLTF_NOTIFY
-					<< "[GLTFReader] primitive[" << primIdx << "]"
+				GLTF_NOTIFY(2)
+					<< "primitive[" << primIdx << "]"
 					<< " mode=" << primitive.mode
 					<< " indices=" << primitive.indices
 					<< " material=" << primitive.material
@@ -254,19 +265,19 @@ public:
 				// vertex attributes -- parsed before material application since
 				// texture-unit binding needs to know which UV set (TEXCOORD_n)
 				// each texture actually asks for.
-				GLTF_NOTIFY << "[GLTFReader] attributes:" << std::endl;
+				GLTF_NOTIFY(3) << "attributes:" << std::endl;
 
 				std::map<int, osg::Array*> texCoordSets;
 
 				for(auto& [attrName, accessorIdx] : primitive.attributes) {
 					bool valid =
 						accessorIdx >= 0 &&
-						accessorIdx < (int)arrays.size() &&
+						accessorIdx < static_cast<int>(arrays.size()) &&
 						arrays[accessorIdx].valid()
 					;
 
-					GLTF_NOTIFY
-						<< "[GLTFReader] " << attrName
+					GLTF_NOTIFY(4)
+						<< "" << attrName
 						<< " -> accessor[" << accessorIdx << "]"
 						<< (valid ? " OK" : " NULL/INVALID") << std::endl
 					;
@@ -290,9 +301,9 @@ public:
 
 				if(
 					primitive.material >= 0 &&
-					primitive.material < (int)model.materials.size()
+					primitive.material < static_cast<int>(model.materials.size())
 				) {
-					GLTF_NOTIFY << "[GLTFReader] applyMaterial " << primitive.material << std::endl;
+					GLTF_NOTIFY(3) << "applyMaterial " << primitive.material << std::endl;
 
 					applyMaterial(primitive.material, baseColorFactor, geom.get(), texCoordSets);
 				}
@@ -311,7 +322,7 @@ public:
 				// index primitive set -- handles uint8, uint16, uint32
 				if(
 					primitive.indices >= 0 &&
-					primitive.indices < (int)arrays.size() &&
+					primitive.indices < static_cast<int>(arrays.size()) &&
 					arrays[primitive.indices].valid()
 				) {
 					int glMode = primitiveMode(primitive.mode);
@@ -347,7 +358,7 @@ public:
 
 						default:
 							OSG_WARN
-								<< "[GLTFReader] unsupported index component type "
+								<< "unsupported index component type "
 								<< idxAcc.componentType << std::endl
 							;
 					}
@@ -382,14 +393,14 @@ public:
 				geode->addDrawable(geom);
 
 				if(isTriangles && !skipNormals && !geom->getNormalArray()) {
-					GLTF_NOTIFY << "[GLTFReader] generating normals via SmoothingVisitor" << std::endl;
+					GLTF_NOTIFY(3) << "generating normals via SmoothingVisitor" << std::endl;
 
 					osgUtil::SmoothingVisitor sv;
 
 					geode->accept(sv);
 				}
 
-				GLTF_NOTIFY << "[GLTFReader] addChild geode to mesh group" << std::endl;
+				GLTF_NOTIFY(3) << "addChild geode to mesh group" << std::endl;
 
 				group->addChild(geode);
 
@@ -491,8 +502,8 @@ public:
 					osg::ref_ptr<osg::Image> mrImg = loadRawImage(pbr.metallicRoughnessTexture.index);
 
 					if(mat.occlusionTexture.texCoord != pbr.metallicRoughnessTexture.texCoord) {
-						GLTF_NOTIFY
-							<< "[GLTFReader] material " << matIdx
+						GLTF_NOTIFY(3)
+							<< "material " << matIdx
 							<< ": occlusionTexture and metallicRoughnessTexture use"
 							<< " different UV sets -- occlusion bake assumes they"
 							<< " share the same UV space; result may be UV-mismatched" << std::endl
@@ -503,7 +514,7 @@ public:
 
 					bakeOcclusionIntoOrm(
 						occImg.get(),
-						(float)mat.occlusionTexture.strength,
+						static_cast<float>(mat.occlusionTexture.strength),
 						mrImg.get(),
 						bakedOrm
 					);
@@ -512,10 +523,10 @@ public:
 
 					if(
 						pbr.metallicRoughnessTexture.index >= 0 &&
-						pbr.metallicRoughnessTexture.index < (int)model.textures.size()
+						pbr.metallicRoughnessTexture.index < static_cast<int>(model.textures.size())
 					) samplerIdx = model.textures[pbr.metallicRoughnessTexture.index].sampler;
 
-					else if(mat.occlusionTexture.index < (int)model.textures.size())
+					else if(mat.occlusionTexture.index < static_cast<int>(model.textures.size()))
 						samplerIdx = model.textures[mat.occlusionTexture.index].sampler;
 
 					ormTex = new osg::Texture2D(bakedOrm.get());
@@ -577,10 +588,10 @@ public:
 						const tinygltf::Value& df = sg.Get("diffuseFactor");
 
 						if(df.IsArray() && df.ArrayLen() == 4) diffuseFactor.set(
-							(float)df.Get(0).GetNumberAsDouble(),
-							(float)df.Get(1).GetNumberAsDouble(),
-							(float)df.Get(2).GetNumberAsDouble(),
-							(float)df.Get(3).GetNumberAsDouble()
+							static_cast<float>(df.Get(0).GetNumberAsDouble()),
+							static_cast<float>(df.Get(1).GetNumberAsDouble()),
+							static_cast<float>(df.Get(2).GetNumberAsDouble()),
+							static_cast<float>(df.Get(3).GetNumberAsDouble())
 						);
 					}
 
@@ -592,16 +603,16 @@ public:
 						const tinygltf::Value& sf = sg.Get("specularFactor");
 
 						if(sf.IsArray() && sf.ArrayLen() == 3) specularFactor.set(
-							(float)sf.Get(0).GetNumberAsDouble(),
-							(float)sf.Get(1).GetNumberAsDouble(),
-							(float)sf.Get(2).GetNumberAsDouble()
+							static_cast<float>(sf.Get(0).GetNumberAsDouble()),
+							static_cast<float>(sf.Get(1).GetNumberAsDouble()),
+							static_cast<float>(sf.Get(2).GetNumberAsDouble())
 						);
 					}
 
 					float glossinessFactor = 1.0f;
 
 					if(sg.Has("glossinessFactor"))
-						glossinessFactor = (float)sg.Get("glossinessFactor").GetNumberAsDouble();
+						glossinessFactor = static_cast<float>(sg.Get("glossinessFactor").GetNumberAsDouble());
 
 					int diffuseIdx = -1, diffuseTexCoord = 0;
 
@@ -678,8 +689,8 @@ public:
 								specGlossIdx >= 0 &&
 								diffuseTexCoord != specGlossTexCoord
 							) {
-								GLTF_NOTIFY
-									<< "[GLTFReader] material " << matIdx
+								GLTF_NOTIFY(3)
+									<< "material " << matIdx
 									<< ": diffuseTexture and specularGlossinessTexture use"
 									" different UV sets (" << diffuseTexCoord << " vs "
 									<< specGlossTexCoord << ") -- spec-gloss bake assumes they"
@@ -704,10 +715,10 @@ public:
 
 							int samplerIdx = -1;
 
-							if(diffuseIdx >= 0 && diffuseIdx < (int)model.textures.size())
+							if(diffuseIdx >= 0 && diffuseIdx < static_cast<int>(model.textures.size()))
 								samplerIdx = model.textures[diffuseIdx].sampler;
 
-							else if(specGlossIdx >= 0 && specGlossIdx < (int)model.textures.size())
+							else if(specGlossIdx >= 0 && specGlossIdx < static_cast<int>(model.textures.size()))
 								samplerIdx = model.textures[specGlossIdx].sampler;
 
 							// Baked images are already linear (converted, not
@@ -770,12 +781,12 @@ public:
 			// "metallicFactor" etc.
 			geom->getOrCreateStateSet()->addUniform(new osg::Uniform(
 				"osgGLTF_metallicFactor",
-				(float)pbr.metallicFactor
+				static_cast<float>(pbr.metallicFactor)
 			));
 
 			geom->getOrCreateStateSet()->addUniform(new osg::Uniform(
 				"osgGLTF_roughnessFactor",
-				(float)pbr.roughnessFactor
+				static_cast<float>(pbr.roughnessFactor)
 			));
 
 			// Downstream shaders that sample unit 2's R channel for ambient occlusion (e.g.
@@ -835,11 +846,11 @@ public:
 		// and the spec-gloss->metal-rough bake below, which both need pixel
 		// access independent of how the image ends up being sampled.
 		osg::Image* loadRawImage(int texIdx) const {
-			if(texIdx < 0 || texIdx >= (int)model.textures.size()) return nullptr;
+			if(texIdx < 0 || texIdx >= static_cast<int>(model.textures.size())) return nullptr;
 
 			const tinygltf::Texture& tex = model.textures[texIdx];
 
-			if(tex.source < 0 || tex.source >= (int)model.images.size()) return nullptr;
+			if(tex.source < 0 || tex.source >= static_cast<int>(model.images.size())) return nullptr;
 
 			const tinygltf::Image& image = model.images[tex.source];
 			osg::ref_ptr<osg::Image> img;
@@ -895,14 +906,14 @@ public:
 			osgTex->setResizeNonPowerOfTwoHint(false);
 			osgTex->setDataVariance(osg::Object::STATIC);
 
-			if(samplerIdx >= 0 && samplerIdx < (int)model.samplers.size()) {
+			if(samplerIdx >= 0 && samplerIdx < static_cast<int>(model.samplers.size())) {
 				const tinygltf::Sampler& s = model.samplers[samplerIdx];
 				// Force mipmap min-filter regardless of what the sampler says,
 				// since we don't generate mipmaps on load.
 				osgTex->setFilter(osg::Texture::MIN_FILTER, osg::Texture::LINEAR_MIPMAP_LINEAR);
 				osgTex->setFilter(osg::Texture::MAG_FILTER, osg::Texture::LINEAR);
-				osgTex->setWrap(osg::Texture::WRAP_S, (osg::Texture::WrapMode)s.wrapS);
-				osgTex->setWrap(osg::Texture::WRAP_T, (osg::Texture::WrapMode)s.wrapT);
+				osgTex->setWrap(osg::Texture::WRAP_S, static_cast<osg::Texture::WrapMode>(s.wrapS));
+				osgTex->setWrap(osg::Texture::WRAP_T, static_cast<osg::Texture::WrapMode>(s.wrapT));
 			}
 
 			else {
@@ -918,11 +929,11 @@ public:
 		// once as linear data, so the cache key includes the color-space flag
 		// to avoid one use silently reusing the other's decode setting.
 		osg::Texture2D* getOrCreateTexture(int texIdx, bool sRGB) const {
-			if(texIdx < 0 || texIdx >= (int)model.textures.size()) return nullptr;
+			if(texIdx < 0 || texIdx >= static_cast<int>(model.textures.size())) return nullptr;
 
 			const tinygltf::Texture& tex = model.textures[texIdx];
 
-			if(tex.source < 0 || tex.source >= (int)model.images.size()) return nullptr;
+			if(tex.source < 0 || tex.source >= static_cast<int>(model.images.size())) return nullptr;
 
 			const tinygltf::Image& image = model.images[tex.source];
 			bool embedded = image.image.size() > 0 || (!image.uri.empty() && tinygltf::IsDataURI(image.uri));
@@ -1028,8 +1039,8 @@ public:
 				specGlossR->scaleImage(w, h, 1);
 			}
 
-			auto* baseColorData = new unsigned char[(size_t)w * h * 4];
-			auto* ormData = new unsigned char[(size_t)w * h * 3];
+			auto* baseColorData = new unsigned char[static_cast<size_t>(w) * h * 4];
+			auto* ormData = new unsigned char[static_cast<size_t>(w) * h * 3];
 
 			for(int y = 0; y < h; ++y) {
 				for(int x = 0; x < w; ++x) {
@@ -1069,16 +1080,16 @@ public:
 					float baseB = osg::clampBetween(bcFromDiffuseB * (1.0f - t) + bcFromSpecB * t, 0.0f, 1.0f);
 					float roughness = osg::clampBetween(1.0f - glossiness, 0.0f, 1.0f);
 
-					size_t bi = ((size_t)y * w + x) * 4;
-					baseColorData[bi + 0] = (unsigned char)(baseR * 255.0f + 0.5f);
-					baseColorData[bi + 1] = (unsigned char)(baseG * 255.0f + 0.5f);
-					baseColorData[bi + 2] = (unsigned char)(baseB * 255.0f + 0.5f);
-					baseColorData[bi + 3] = (unsigned char)(dTex.w() * diffuseFactor.w() * 255.0f + 0.5f);
+					size_t bi = (static_cast<size_t>(y) * w + x) * 4;
+					baseColorData[bi + 0] = static_cast<unsigned char>(baseR * 255.0f + 0.5f);
+					baseColorData[bi + 1] = static_cast<unsigned char>(baseG * 255.0f + 0.5f);
+					baseColorData[bi + 2] = static_cast<unsigned char>(baseB * 255.0f + 0.5f);
+					baseColorData[bi + 3] = static_cast<unsigned char>(dTex.w() * diffuseFactor.w() * 255.0f + 0.5f);
 
-					size_t oi = ((size_t)y * w + x) * 3;
+					size_t oi = (static_cast<size_t>(y) * w + x) * 3;
 					ormData[oi + 0] = 255; // AO: spec-gloss carries no occlusion channel
-					ormData[oi + 1] = (unsigned char)(roughness * 255.0f + 0.5f);
-					ormData[oi + 2] = (unsigned char)(metallic * 255.0f + 0.5f);
+					ormData[oi + 1] = static_cast<unsigned char>(roughness * 255.0f + 0.5f);
+					ormData[oi + 2] = static_cast<unsigned char>(metallic * 255.0f + 0.5f);
 				}
 			}
 
@@ -1149,18 +1160,18 @@ public:
 				mrR->scaleImage(w, h, 1);
 			}
 
-			auto* ormData = new unsigned char[(size_t)w * h * 3];
+			auto* ormData = new unsigned char[static_cast<size_t>(w) * h * 3];
 
 			for(int y = 0; y < h; ++y) {
 				for(int x = 0; x < w; ++x) {
 					osg::Vec4 occTex = occR ? occR->getColor(x, y) : osg::Vec4(1, 1, 1, 1);
 					osg::Vec4 mrTex = mrR ? mrR->getColor(x, y) : osg::Vec4(1, 1, 1, 1);
 					float ao = 1.0f + strength * (occTex.x() - 1.0f);
-					size_t oi = ((size_t)y * w + x) * 3;
+					size_t oi = (static_cast<size_t>(y) * w + x) * 3;
 
-					ormData[oi + 0] = (unsigned char)(osg::clampBetween(ao, 0.0f, 1.0f) * 255.0f + 0.5f);
-					ormData[oi + 1] = (unsigned char)(mrTex.y() * 255.0f + 0.5f);
-					ormData[oi + 2] = (unsigned char)(mrTex.z() * 255.0f + 0.5f);
+					ormData[oi + 0] = static_cast<unsigned char>(osg::clampBetween(ao, 0.0f, 1.0f) * 255.0f + 0.5f);
+					ormData[oi + 1] = static_cast<unsigned char>(mrTex.y() * 255.0f + 0.5f);
+					ormData[oi + 2] = static_cast<unsigned char>(mrTex.z() * 255.0f + 0.5f);
 				}
 			}
 
@@ -1222,8 +1233,8 @@ public:
 			int accIdx = 0;
 
 			for(auto& acc : model.accessors) {
-				GLTF_NOTIFY
-					<< "[GLTFReader] accessor[" << accIdx << "]"
+				GLTF_NOTIFY(1)
+					<< "accessor[" << accIdx << "]"
 					<< " componentType=" << acc.componentType
 					<< " type=" << acc.type
 					<< " count=" << acc.count
@@ -1235,9 +1246,9 @@ public:
 				// into the arrays vector stay in sync with accessor indices.
 				if(
 					acc.bufferView < 0 ||
-					acc.bufferView >= (int)model.bufferViews.size()
+					acc.bufferView >= static_cast<int>(model.bufferViews.size())
 				) {
-					GLTF_NOTIFY << "[GLTFReader] -> no bufferView, skipping" << std::endl;
+					GLTF_NOTIFY(2) << "-> no bufferView, skipping" << std::endl;
 
 					arrays.push_back({});
 
@@ -1312,8 +1323,8 @@ public:
 					default: break; } break;
 
 				default:
-					GLTF_NOTIFY
-						<< "[GLTFReader] unknown component type "
+					GLTF_NOTIFY(2)
+						<< "unknown component type "
 						<< acc.componentType << std::endl
 					;
 
@@ -1326,11 +1337,11 @@ public:
 					a->setBinding(osg::Array::BIND_PER_VERTEX);
 					a->setNormalize(acc.normalized);
 
-					GLTF_NOTIFY << "[GLTFReader] -> built array, " << a->getNumElements() << " element(s)" << std::endl;
+					GLTF_NOTIFY(2) << "-> built array, " << a->getNumElements() << " element(s)" << std::endl;
 				}
 
 				else {
-					GLTF_NOTIFY << "[GLTFReader] -> no array built (unhandled type combination)" << std::endl;
+					GLTF_NOTIFY(2) << "-> no array built (unhandled type combination)" << std::endl;
 				}
 
 				arrays.push_back(a);
