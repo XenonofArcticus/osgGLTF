@@ -54,6 +54,7 @@ if(OSG_PYTHON_DIR)
 	target_include_directories(osgGLTF_python PRIVATE
 		"${OSG_PYTHON_DIR}"
 		"${OSG_PYTHON_DIR}/etc"
+		"${CMAKE_SOURCE_DIR}/ext/tinygltf"
 	)
 	target_link_libraries(osgGLTF_python PRIVATE osgGLTF pybind11::module)
 	target_compile_features(osgGLTF_python PUBLIC cxx_std_20)

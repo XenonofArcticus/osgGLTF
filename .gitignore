@@ -1,5 +1,7 @@
-BUILD
+BUILD*
 tmp
+src/__pycache__
+ai
 
 # Prerequisites
 *.d

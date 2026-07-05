@@ -51,6 +51,11 @@
 // Change this to osg::INFO/osg::DEBUG_INFO/etc. to reduce verbosity.
 #define GLTF_NOTIFY_SEVERITY osg::NOTICE
 
+// UBO binding for the per-primitive osgGLTF_Material block (see applyMaterial() below). UBO and
+// SSBO binding points are separate GL namespaces, so this doesn't need to avoid
+// GLTF_JOINT_MATRICES_BINDING (an SSBO binding, declared in GLTFReader-Skin.hpp).
+static constexpr GLuint GLTF_MATERIAL_UBO_BINDING = 0;
+
 inline std::ostream& gltfNotify(osg::NotifySeverity severity, unsigned indent = 0) {
 	std::ostream& out = osg::notify(severity) << "[GLTF] ";
 
@@ -1211,68 +1216,52 @@ public:
 				}
 			}
 
-			// Export metallicFactor/roughnessFactor as uniforms for downstream PBR shaders (e.g.
-			// pyosg-lighting/09-ibl.py) that sample the ORM texture directly -- tinygltf defaults
-			// both to 1.0 per spec even when the glTF JSON omits pbrMetallicRoughness entirely, so
-			// this is always a sane value. Prefixed osgGLTF_* -- these are this plugin's own
-			// extension to the material contract, not part of OSG's osg_* built-in uniform set, so
-			// they need a namespace of their own to avoid colliding with an unrelated shader's own
-			// "metallicFactor" etc.
-			geom->getOrCreateStateSet()->addUniform(new osg::Uniform(
-				"osgGLTF_metallicFactor",
-				static_cast<float>(pbr.metallicFactor)
-			));
+			// Export the material as a single osgGLTF_Material UBO for downstream PBR shaders
+			// (e.g. pyosg-lighting/09-ibl.py) instead of one osg::Uniform per field -- this is
+			// this plugin's own extension to the material contract, not part of OSG's osg_*
+			// built-in uniform set, so it's namespaced (block name + binding) to avoid colliding
+			// with an unrelated shader's own material uniforms.
+			//
+			// std140 layout (must match the GLSL `layout(std140, binding = N) uniform
+			// osgGLTF_Material { ... }` block exactly -- see 09-ibl.py):
+			//   vec4  baseColorFactor              offset  0 (16 bytes)
+			//   float roughnessFactor               offset 16
+			//   float metallicFactor                offset 20
+			//   float hasBaseColorMap               offset 24
+			//   float hasMetallicRoughnessMap        offset 28
+			//   float hasOcclusion                  offset 32
+			//   float hasNormalMap                  offset 36
+			//   (2 floats padding to round the block up to a multiple of 16) offset 40, 44
+			// haveOcclusion/haveMetallicRoughnessMap/haveCoreBaseColor/haveNormalMap are gates so
+			// a factor-only material (no texture at all -- e.g. Fox's roughnessFactor=0.58 with
+			// no metallicRoughnessTexture) doesn't get its authored factor silently discarded by
+			// an unconditional texture() read of an unbound unit.
+			osg::ref_ptr<osg::FloatArray> materialData = new osg::FloatArray(12);
 
-			geom->getOrCreateStateSet()->addUniform(new osg::Uniform(
-				"osgGLTF_roughnessFactor",
-				static_cast<float>(pbr.roughnessFactor)
-			));
+			(*materialData)[0] = baseColorFactor.x();
+			(*materialData)[1] = baseColorFactor.y();
+			(*materialData)[2] = baseColorFactor.z();
+			(*materialData)[3] = baseColorFactor.w();
+			(*materialData)[4] = static_cast<float>(pbr.roughnessFactor);
+			(*materialData)[5] = static_cast<float>(pbr.metallicFactor);
+			(*materialData)[6] = haveCoreBaseColor ? 1.0f : 0.0f;
+			(*materialData)[7] = haveMetallicRoughnessMap ? 1.0f : 0.0f;
+			(*materialData)[8] = haveOcclusion ? 1.0f : 0.0f;
+			(*materialData)[9] = haveNormalMap ? 1.0f : 0.0f;
+			(*materialData)[10] = 0.0f;
+			(*materialData)[11] = 0.0f;
 
-			// Downstream shaders that sample unit 2's R channel for ambient occlusion (e.g.
-			// 09-ibl.py) must gate on this rather than trusting R unconditionally -- when no
-			// occlusionTexture is present at all, that channel is spec-unused and frequently 0,
-			// which would otherwise zero out the entire IBL ambient term.
-			geom->getOrCreateStateSet()->addUniform(new osg::Uniform(
-				"osgGLTF_hasOcclusion",
-				haveOcclusion
-			));
+			materialData->setBufferObject(new osg::UniformBufferObject());
 
-			// Same story for G(roughness)/B(metallic): a material can be entirely factor-driven
-			// with no metallicRoughnessTexture at all (e.g. glTF-Sample-Models' Fox:
-			// roughnessFactor=0.58, no texture). Sampling an unbound unit 2 reads back 0, and a
-			// shader that unconditionally does `texture(ormTex,...).g * roughnessFactor` silently
-			// discards the authored factor and renders a mirror-smooth surface instead.
-			geom->getOrCreateStateSet()->addUniform(new osg::Uniform(
-				"osgGLTF_hasMetallicRoughnessMap",
-				haveMetallicRoughnessMap
-			));
-
-			// Downstream shaders that reconstruct a per-pixel TBN basis from screen-space
-			// derivatives (dFdx/dFdy of position+UV -- see VulkanSceneGraph's standard_pbr.frag,
-			// which uses this exact technique and needs no vertex TANGENT at all) still need to
-			// know whether sampling the normal map is meaningful in the first place; without a
-			// normal map the shading normal should just be the geometric normal, not a perturbation
-			// of it.
-			geom->getOrCreateStateSet()->addUniform(new osg::Uniform(
-				"osgGLTF_hasNormalMap",
-				haveNormalMap
-			));
-
-			// Same "unconditional texture() call has no fallback" gap as
-			// occlusion/metallicRoughness above, but for baseColor: a factor-only material (no
-			// baseColorTexture) would otherwise read an unbound unit 0 as black. baseColorFactor
-			// already holds the right value for both the core-PBR and spec-gloss-
-			// converted-to-diffuseFactor cases (set earlier in this function), so it's exported
-			// as-is.
-			geom->getOrCreateStateSet()->addUniform(new osg::Uniform(
-				"osgGLTF_hasBaseColorMap",
-				haveCoreBaseColor
-			));
-
-			geom->getOrCreateStateSet()->addUniform(new osg::Uniform(
-				"osgGLTF_baseColorFactor",
-				baseColorFactor
-			));
+			geom->getOrCreateStateSet()->setAttributeAndModes(
+				new osg::UniformBufferBinding(
+					GLTF_MATERIAL_UBO_BINDING,
+					materialData.get(),
+					0,
+					static_cast<GLsizeiptr>(materialData->getTotalDataSize())
+				),
+				osg::StateAttribute::ON
+			);
 
 			if(mat.alphaMode == "BLEND" || mat.alphaMode == "MASK") {
 				geom->getOrCreateStateSet()->setMode(GL_BLEND, osg::StateAttribute::ON);

@@ -129,3 +129,10 @@ set_target_properties(osggltf-iblbake-cpu PROPERTIES
 )
 
 install(TARGETS osggltf-iblbake-cpu DESTINATION ${CMAKE_INSTALL_PREFIX}/bin)
+
+if(OSG_PYTHON_DIR)
+	install(PROGRAMS osggltf.py
+		DESTINATION ${CMAKE_INSTALL_PREFIX}/bin
+		RENAME osggltf
+	)
+endif()
