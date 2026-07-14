@@ -5,6 +5,8 @@
 #include <osg/MatrixTransform>
 #include <osg/NodeVisitor>
 
+#include <osgGLTF/SimplePlayer.hpp>
+
 #include <algorithm>
 #include <cmath>
 #include <map>
@@ -57,7 +59,9 @@ inline GLTFTRS gltfNodeBaseTRS(const tinygltf::Node& node) {
 	return trs;
 }
 
-class GLTFAnimationCallback: public osg::NodeCallback {
+class GLTFAnimationCallback:
+	public osg::NodeCallback,
+	public osgGLTF::SimplePlayerControl {
 public:
 	enum class Path {
 		Translation,
@@ -75,13 +79,61 @@ public:
 		std::vector<osg::Quat> quatValues;
 	};
 
-	std::string name;
-	std::vector<Channel> channels;
+	struct Clip {
+		std::string name;
+		std::vector<Channel> channels;
+		double duration = 0.0;
+	};
+
+	std::vector<Clip> clips;
 	std::map<int, GLTFTRS> baseTRS;
-	double duration = 0.0;
+
+	std::size_t getNumAnimations() const override { return clips.size(); }
+
+	std::string getAnimationName(std::size_t index) const override {
+		return index < clips.size() ? clips[index].name : std::string();
+	}
+
+	bool playAnimation(std::size_t index) override {
+		if(index >= clips.size()) return false;
+
+		_activeClip = index;
+		_playing = true;
+		_restartRequested = true;
+		return true;
+	}
+
+	bool playAnimation(const std::string& name) override {
+		for(std::size_t i = 0; i < clips.size(); ++i) {
+			if(clips[i].name == name) return playAnimation(i);
+		}
+
+		return false;
+	}
+
+	std::size_t getCurrentAnimationIndex() const override {
+		return _activeClip < clips.size()
+			? _activeClip
+			: osgGLTF::SimplePlayer::NoAnimation;
+	}
+
+	std::string getCurrentAnimationName() const override {
+		return getAnimationName(getCurrentAnimationIndex());
+	}
+
+	void setPlaying(bool playing) override { _playing = playing; }
+	bool getPlaying() const override { return _playing; }
+	void restart() override { _restartRequested = true; }
 
 	void operator()(osg::Node* node, osg::NodeVisitor* nv) override {
-		if(channels.empty() || duration <= 0.0) {
+		if(_activeClip >= clips.size()) {
+			traverse(node, nv);
+			return;
+		}
+
+		const Clip& clip = clips[_activeClip];
+
+		if(clip.channels.empty() || clip.duration <= 0.0) {
 			traverse(node, nv);
 			return;
 		}
@@ -90,21 +142,32 @@ public:
 
 		if(nv && nv->getFrameStamp()) simTime = nv->getFrameStamp()->getSimulationTime();
 
-		if(!_started) {
+		if(!_started || _restartRequested) {
 			_started = true;
-			_startTime = simTime;
+			_restartRequested = false;
+			_playTime = 0.0;
+			_lastSimulationTime = simTime;
+			restoreBasePose();
 
 			GLTF_NOTIFY(1)
-				<< "playing animation '" << name << "'"
-				<< " duration=" << duration
-				<< " channel(s)=" << channels.size() << std::endl
+				<< "playing animation '" << clip.name << "'"
+				<< " duration=" << clip.duration
+				<< " channel(s)=" << clip.channels.size() << std::endl
 			;
 		}
 
-		double t = std::fmod(std::max(0.0, simTime - _startTime), duration);
+		if(_playing) _playTime += std::max(0.0, simTime - _lastSimulationTime);
+		_lastSimulationTime = simTime;
+
+		if(!_playing) {
+			traverse(node, nv);
+			return;
+		}
+
+		double t = std::fmod(_playTime, clip.duration);
 		std::map<int, GLTFTRS> current = baseTRS;
 
-		for(const Channel& channel : channels) {
+		for(const Channel& channel : clip.channels) {
 			auto it = current.find(channel.targetNode);
 
 			if(it == current.end()) continue;
@@ -121,7 +184,7 @@ public:
 		for(const auto& [nodeIdx, trs] : current) {
 			osg::MatrixTransform* target = nullptr;
 
-			for(const Channel& channel : channels) {
+			for(const Channel& channel : clip.channels) {
 				if(channel.targetNode == nodeIdx) {
 					target = channel.target.get();
 					break;
@@ -136,7 +199,21 @@ public:
 
 private:
 	bool _started = false;
-	double _startTime = 0.0;
+	bool _playing = true;
+	bool _restartRequested = false;
+	std::size_t _activeClip = 0;
+	double _playTime = 0.0;
+	double _lastSimulationTime = 0.0;
+
+	void restoreBasePose() {
+		for(const Clip& clip : clips) {
+			for(const Channel& channel : clip.channels) {
+				auto it = baseTRS.find(channel.targetNode);
+				if(it != baseTRS.end() && channel.target.valid())
+					channel.target->setMatrix(it->second.matrix());
+			}
+		}
+	}
 
 	static size_t sampleIndex(const std::vector<float>& times, double t, double& mix) {
 		if(times.size() < 2) {

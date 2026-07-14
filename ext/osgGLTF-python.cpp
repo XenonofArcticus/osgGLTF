@@ -6,6 +6,7 @@
 #define TINYGLTF_NOEXCEPTION
 
 #include "osgGLTF/IBLBaker.hpp"
+#include "osgGLTF/SimplePlayer.hpp"
 
 #include <osg/Image>
 #include <osgDB/FileNameUtils>
@@ -588,6 +589,48 @@ std::string inspectGLTFJson(const std::string& path, bool loadImages, int indent
 
 PYBIND11_MODULE(osgGLTF, m) {
 	auto py_osg = py::module_::import("OpenSceneGraph");
+
+	py::class_<osgGLTF::SimplePlayer>(m, "SimplePlayer")
+		.def(py::init<osg::Node*>(), "model"_a)
+		.def("__bool__", [](const osgGLTF::SimplePlayer& player) {
+			return static_cast<bool>(player);
+		})
+		.def_property_readonly(
+			"numAnimations",
+			&osgGLTF::SimplePlayer::getNumAnimations
+		)
+		.def("getAnimationName", &osgGLTF::SimplePlayer::getAnimationName, "index"_a)
+		.def(
+			"playAnimation",
+			py::overload_cast<std::size_t>(&osgGLTF::SimplePlayer::playAnimation),
+			"index"_a
+		)
+		.def(
+			"playAnimation",
+			py::overload_cast<const std::string&>(&osgGLTF::SimplePlayer::playAnimation),
+			"name"_a
+		)
+		.def_property_readonly(
+			"currentAnimationIndex",
+			[](const osgGLTF::SimplePlayer& player) -> py::object {
+				const std::size_t index = player.getCurrentAnimationIndex();
+				return index == osgGLTF::SimplePlayer::NoAnimation
+					? py::none()
+					: py::cast(index);
+			}
+		)
+		.def_property_readonly(
+			"currentAnimationName",
+			&osgGLTF::SimplePlayer::getCurrentAnimationName
+		)
+		.def_property(
+			"playing",
+			&osgGLTF::SimplePlayer::getPlaying,
+			&osgGLTF::SimplePlayer::setPlaying
+		)
+		.def("togglePlaying", &osgGLTF::SimplePlayer::togglePlaying)
+		.def("restart", &osgGLTF::SimplePlayer::restart)
+	;
 
 	py::class_<osgGLTF::IBLBakeOptions>(m, "IBLBakeOptions")
 		.def(py::init<>())

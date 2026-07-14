@@ -481,24 +481,18 @@ public:
 
 			if(!root || model.animations.empty()) return;
 
-			size_t animIdx = 0;
-
-			for(size_t i = 0; i < model.animations.size(); ++i) {
-				if(model.animations[i].name == "Walk") {
-					animIdx = i;
-					break;
-				}
-			}
-
-			const tinygltf::Animation& animation = model.animations[animIdx];
 			osg::ref_ptr<GLTFAnimationCallback> callback = new GLTFAnimationCallback();
 
-			callback->name = animation.name.empty()
-				? std::string("animation[") + std::to_string(animIdx) + "]"
-				: animation.name
-			;
+			for(size_t animIdx = 0; animIdx < model.animations.size(); ++animIdx) {
+				const tinygltf::Animation& animation = model.animations[animIdx];
+				GLTFAnimationCallback::Clip clip;
 
-			for(size_t channelIdx = 0; channelIdx < animation.channels.size(); ++channelIdx) {
+				clip.name = animation.name.empty()
+					? std::string("animation[") + std::to_string(animIdx) + "]"
+					: animation.name
+				;
+
+				for(size_t channelIdx = 0; channelIdx < animation.channels.size(); ++channelIdx) {
 				const tinygltf::AnimationChannel& gltfChannel = animation.channels[channelIdx];
 
 				if(
@@ -516,7 +510,7 @@ public:
 
 				if(gltfSampler.interpolation == "CUBICSPLINE") {
 					GLTF_NOTIFY(2)
-						<< "animation '" << callback->name
+						<< "animation '" << clip.name
 						<< "' channel[" << channelIdx << "] CUBICSPLINE skipped" << std::endl
 					;
 					continue;
@@ -549,7 +543,7 @@ public:
 
 				else {
 					GLTF_NOTIFY(2)
-						<< "animation '" << callback->name
+						<< "animation '" << clip.name
 						<< "' channel[" << channelIdx << "] path '"
 						<< gltfChannel.target_path << "' skipped" << std::endl
 					;
@@ -568,26 +562,39 @@ public:
 					channel.vec3Values.size() != channel.times.size()
 				) continue;
 
-				callback->duration = std::max<double>(callback->duration, channel.times.back());
+				clip.duration = std::max<double>(clip.duration, channel.times.back());
 				callback->baseTRS.emplace(
 					gltfChannel.target_node,
 					gltfNodeBaseTRS(model.nodes[gltfChannel.target_node])
 				);
-				callback->channels.push_back(std::move(channel));
+				clip.channels.push_back(std::move(channel));
+				}
+
+				if(clip.channels.empty()) {
+					GLTF_NOTIFY(1) << "animation '" << clip.name << "' has no supported channels" << std::endl;
+				}
+				else {
+					GLTF_NOTIFY(1)
+						<< "loaded animation '" << clip.name << "'"
+						<< " channels=" << clip.channels.size()
+						<< " duration=" << clip.duration << std::endl
+					;
+				}
+
+				callback->clips.push_back(std::move(clip));
 			}
 
-			if(callback->channels.empty()) {
-				GLTF_NOTIFY(1) << "animation '" << callback->name << "' has no supported channels" << std::endl;
-				return;
+			size_t initialAnimation = 0;
+
+			for(size_t i = 0; i < model.animations.size(); ++i) {
+				if(model.animations[i].name == "Walk") {
+					initialAnimation = i;
+					break;
+				}
 			}
 
+			callback->playAnimation(initialAnimation);
 			root->addUpdateCallback(callback.get());
-
-			GLTF_NOTIFY(1)
-				<< "installed animation '" << callback->name << "'"
-				<< " channels=" << callback->channels.size()
-				<< " duration=" << callback->duration << std::endl
-			;
 		}
 
 		std::vector<float> readFloatTimes(int accessorIdx) const {

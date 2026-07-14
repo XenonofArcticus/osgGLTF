@@ -24,7 +24,9 @@ install(TARGETS osgGLTF
 	RUNTIME DESTINATION ${CMAKE_INSTALL_PREFIX}/bin
 )
 
-install(FILES osgGLTF/IBLBaker.hpp
+install(FILES
+	osgGLTF/IBLBaker.hpp
+	osgGLTF/SimplePlayer.hpp
 	DESTINATION ${CMAKE_INSTALL_PREFIX}/include/osgGLTF
 )
 
