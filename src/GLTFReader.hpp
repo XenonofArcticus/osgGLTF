@@ -33,9 +33,11 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdlib>
+#include <functional>
 #include <map>
 #include <mutex>
 #include <ostream>
+#include <string_view>
 #include <unordered_map>
 #include <string>
 
@@ -72,6 +74,14 @@ inline std::ostream& gltfNotify(osg::NotifySeverity severity, unsigned indent = 
 
 class GLTFReader {
 public:
+	// Optional progress hook for async/threaded loads (see osgGLTF-python.cpp's async reader
+	// binding). `stage` is a short human-readable label ("parsing glTF", "building nodes"),
+	// `current`/`total` describe progress within that stage. Called on whatever thread is
+	// running read() -- the caller is responsible for getting it back to the Python/UI thread
+	// safely (e.g. via pybind11x::put_nowait's call_soon_threadsafe bridge), never call
+	// Python from here directly assuming the GIL is held.
+	using ProgressCallback = std::function<void(std::string_view stage, size_t current, size_t total)>;
+
 	struct TextureCache {
 		std::mutex mutex;
 		std::unordered_map<std::string, osg::ref_ptr<osg::Texture2D>> map;
@@ -104,7 +114,8 @@ public:
 	osgDB::ReaderWriter::ReadResult read(
 		const std::string& location,
 		bool isBinary,
-		const osgDB::Options* readOptions
+		const osgDB::Options* readOptions,
+		const ProgressCallback& progress=nullptr
 	) const {
 		std::string err, warn;
 		tinygltf::Model model;
@@ -122,10 +133,17 @@ public:
 
 		GLTF_NOTIFY(0) << "loading " << location << std::endl;
 
+		if(progress) progress("parsing glTF", 0, 1);
+
+		// tinygltf's own file/buffer/image decode is one opaque blocking call -- no
+		// intermediate progress is available from inside it without hooking its
+		// image-loader callback, which is a bigger lift than this stage warrants.
 		bool ok = isBinary
 			? loader.LoadBinaryFromFile(&model, &err, &warn, location)
 			: loader.LoadASCIIFromFile (&model, &err, &warn, location)
 		;
+
+		if(progress) progress("parsing glTF", 1, 1);
 
 		if(!warn.empty()) OSG_WARN << "" << location << ": " << warn << std::endl;
 
@@ -147,7 +165,7 @@ public:
 
 		Env env(location, readOptions);
 
-		return makeNodeFromModel(model, env);
+		return makeNodeFromModel(model, env, progress);
 	}
 
 	void logAnimationBits(const tinygltf::Model& model) const {
@@ -224,8 +242,12 @@ public:
 		}
 	}
 
-	osg::Node* makeNodeFromModel(const tinygltf::Model& model, const Env& env) const {
-		NodeBuilder builder(this, model, env);
+	osg::Node* makeNodeFromModel(
+		const tinygltf::Model& model,
+		const Env& env,
+		const ProgressCallback& progress=nullptr
+	) const {
+		NodeBuilder builder(this, model, env, progress);
 
 		// glTF is Y-up; rotate to Z-up unless caller passes "gltfZUp"
 		bool zUp =
@@ -262,14 +284,22 @@ public:
 		const GLTFReader* reader;
 		const tinygltf::Model& model;
 		const Env& env;
+		ProgressCallback progress;
 		std::vector<osg::ref_ptr<osg::Array>> arrays;
 		std::vector<osg::ref_ptr<GLTFSkin>> skins;
 		mutable std::vector<osg::observer_ptr<osg::MatrixTransform>> nodeTransforms;
+		mutable size_t nodesBuilt = 0;
 
-		NodeBuilder(const GLTFReader* r, const tinygltf::Model& m, const Env& e):
+		NodeBuilder(
+			const GLTFReader* r,
+			const tinygltf::Model& m,
+			const Env& e,
+			const ProgressCallback& p=nullptr
+		):
 		reader(r),
 		model(m),
-		env(e) {
+		env(e),
+		progress(p) {
 			nodeTransforms.resize(m.nodes.size());
 
 			GLTF_NOTIFY(0) << "extractArrays -- " << m.accessors.size() << " accessor(s)" << std::endl;
@@ -293,6 +323,12 @@ public:
 				<< " skin=" << node.skin
 				<< " children=" << node.children.size() << std::endl
 			;
+
+			// One tick per node regardless of depth -- model.nodes.size() covers every
+			// node in the file, not just ones reachable from the active scene, so this
+			// is an upper-bound denominator (progress may not hit exactly 100% for a
+			// model with unreferenced nodes, which is rare and harmless for a bar).
+			if(progress) progress("building nodes", ++nodesBuilt, model.nodes.size());
 
 			osg::MatrixTransform* mt = new osg::MatrixTransform();
 
@@ -1231,14 +1267,16 @@ public:
 			//
 			// std140 layout (must match the GLSL `layout(std140, binding = N) uniform
 			// osgGLTF_Material { ... }` block exactly -- see 09-ibl.py):
-			//   vec4  baseColorFactor              offset  0 (16 bytes)
-			//   float roughnessFactor               offset 16
-			//   float metallicFactor                offset 20
-			//   float hasBaseColorMap               offset 24
-			//   float hasMetallicRoughnessMap        offset 28
-			//   float hasOcclusion                  offset 32
-			//   float hasNormalMap                  offset 36
-			//   (2 floats padding to round the block up to a multiple of 16) offset 40, 44
+			//
+			// vec4 baseColorFactor offset 0 (16 bytes)
+			// float roughnessFactor offset 16
+			// float metallicFactor offset 20
+			// float hasBaseColorMap offset 24
+			// float hasMetallicRoughnessMap offset 28
+			// float hasOcclusion offset 32
+			// float hasNormalMap offset 36
+			// (2 floats padding to round the block up to a multiple of 16) offset 40, 44
+			//
 			// haveOcclusion/haveMetallicRoughnessMap/haveCoreBaseColor/haveNormalMap are gates so
 			// a factor-only material (no texture at all -- e.g. Fox's roughnessFactor=0.58 with
 			// no metallicRoughnessTexture) doesn't get its authored factor silently discarded by
@@ -1288,6 +1326,7 @@ public:
 			if(tex.source < 0 || tex.source >= static_cast<int>(model.images.size())) return nullptr;
 
 			const tinygltf::Image& image = model.images[tex.source];
+
 			osg::ref_ptr<osg::Image> img;
 
 			if(image.image.size() > 0) {
