@@ -622,8 +622,10 @@ osg::ref_ptr<osg::Node> readNodeFileAsync(
 
 	reader.setTextureCache(&s_asyncTextureCache);
 
-	GLTFReader::ProgressCallback onProgress = [&](std::string_view stage, size_t current, size_t total) {
-		pyx::put_nowait(loop, queue, "progress", job_id, std::string(stage), current, total);
+	GLTFReader::ProgressCallback onProgress = [&](GLTFReader::Stage stage, size_t current, size_t total) {
+		pyx::put_nowait(
+			loop, queue, "progress", job_id, std::string(GLTFReader::stageName(stage)), current, total
+		);
 	};
 
 	auto result = reader.read(location, isBinary, nullptr, onProgress);

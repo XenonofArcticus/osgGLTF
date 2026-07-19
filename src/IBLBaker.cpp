@@ -261,7 +261,7 @@ void IBLReadback::operator()(osg::RenderInfo& ri) const {
 	auto* texObj = srcTex->getTextureObject(ri.getContextID());
 
 	if(!texObj) {
-		OSG_WARN << "osgGLTF: prefilter texture not on GPU yet; retrying next frame\n";
+		OSG_WARN << "osgGLTF: prefilter texture not on GPU yet; retrying next frame" << std::endl;
 
 		return;
 	}

@@ -60,4 +60,13 @@ if(OSG_PYTHON_DIR)
 	target_compile_features(osgGLTF_python PUBLIC cxx_std_20)
 	# target_compile_options(osgGLTF_python PRIVATE ${SLUGHORN_COMPILE_OPTIONS})
 	set_target_properties(osgGLTF_python PROPERTIES POSITION_INDEPENDENT_CODE ON)
+
+	# ext/osgGLTF-python.cpp pulls in ext/tinygltf/json.hpp, which uses the now-deprecated
+	# std::is_pod -- not our code to fix, silence just this warning on just this file
+	# rather than disabling deprecation warnings project-wide.
+	if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+		set_source_files_properties("ext/osgGLTF-python.cpp" PROPERTIES
+			COMPILE_OPTIONS "-Wno-deprecated-declarations"
+		)
+	endif()
 endif()

@@ -40,6 +40,15 @@ target_include_directories(osgdb_gltf PRIVATE
 	${OPENSCENEGRAPH_INCLUDE_DIRS}
 )
 
+# ReaderWriterGLTF.cpp pulls in ext/tinygltf/json.hpp, which uses the now-deprecated
+# std::is_pod -- not our code to fix, silence just this warning on just this file
+# rather than disabling deprecation warnings project-wide.
+if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+	set_source_files_properties(ReaderWriterGLTF.cpp PROPERTIES
+		COMPILE_OPTIONS "-Wno-deprecated-declarations"
+	)
+endif()
+
 target_link_libraries(osgdb_gltf PRIVATE
 	${OPENSCENEGRAPH_LIBRARIES}
 )

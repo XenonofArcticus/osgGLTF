@@ -1,4 +1,4 @@
-// GLTFReader.h -- standalone OSG glTF 2.0 reader, no osgEarth dependency.
+// GLTFReader.h - standalone OSG glTF 2.0 reader, no osgEarth dependency.
 // Derived from osgEarth's GLTFReader (Pelican Mapping, LGPL 2+).
 //
 // Stripped: URI class, InstanceBuilder, StateTransition, shaderGenerator,
@@ -41,7 +41,7 @@
 #include <unordered_map>
 #include <string>
 
-// tiny_gltf.h is intentionally NOT included here -- see file comment above.
+// tiny_gltf.h is intentionally NOT included here - see file comment above.
 
 #ifndef GL_SRGB8
 # define GL_SRGB8 0x8C41
@@ -74,13 +74,31 @@ inline std::ostream& gltfNotify(osg::NotifySeverity severity, unsigned indent = 
 
 class GLTFReader {
 public:
+	// Fixed, strictly sequential progress stages for read(): Parsing -> LoadingTextures ->
+	// BuildingNodes. Contract: within a stage `current` is non-decreasing, and every stage
+	// emits a final current==total tick before the next stage's first event. `total` is
+	// always a real known count (Parsing/LoadingTextures use a cheap metadata-only pre-pass
+	// to learn the image count up front - see read() -- so there is no indeterminate/
+	// unknown-total case to represent).
+	enum class Stage { Parsing, LoadingTextures, BuildingNodes };
+
+	static constexpr std::string_view stageName(Stage stage) {
+		switch(stage) {
+			case Stage::Parsing: return "parsing";
+			case Stage::LoadingTextures: return "loading_textures";
+			case Stage::BuildingNodes: return "building_nodes";
+		}
+
+		return "";
+	}
+
 	// Optional progress hook for async/threaded loads (see osgGLTF-python.cpp's async reader
-	// binding). `stage` is a short human-readable label ("parsing glTF", "building nodes"),
-	// `current`/`total` describe progress within that stage. Called on whatever thread is
-	// running read() -- the caller is responsible for getting it back to the Python/UI thread
-	// safely (e.g. via pybind11x::put_nowait's call_soon_threadsafe bridge), never call
-	// Python from here directly assuming the GIL is held.
-	using ProgressCallback = std::function<void(std::string_view stage, size_t current, size_t total)>;
+	// binding, which maps Stage to a wire string via stageName() at the pybind11 boundary).
+	// Called on whatever thread is running read() - the caller is responsible for getting it
+	// back to the Python/UI thread safely (e.g. via pybind11x::put_nowait's
+	// call_soon_threadsafe bridge), never call Python from here directly assuming the GIL is
+	// held.
+	using ProgressCallback = std::function<void(Stage stage, size_t current, size_t total)>;
 
 	struct TextureCache {
 		std::mutex mutex;
@@ -111,6 +129,64 @@ public:
 		return tinygltf::ExpandFilePath(path, userData);
 	}
 
+private:
+	// Context threaded through tinygltf's C-function-pointer image loader via its
+	// void* user_pointer param (same pattern FsCallbacks.user_data already uses above).
+	// Not const-qualified since imagesLoaded is ticked from inside the callback.
+	struct ImageLoadContext {
+		const ProgressCallback* progress;
+		size_t imagesLoaded = 0;
+		size_t totalImages = 0;
+	};
+
+	// No-op image loader used only for the metadata-only pre-pass below - skips decode
+	// entirely, just lets tinygltf finish parsing the JSON model (including model.images,
+	// which is populated from the JSON regardless of whether pixels get decoded).
+	static bool skipImageLoad(
+		tinygltf::Image*,
+		const int,
+		std::string*,
+		std::string*,
+		int,
+		int,
+		const unsigned char*,
+		int,
+		void*
+	) {
+		return true;
+	}
+
+	// Real (non-skipping) image loader: decodes via tinygltf's own default LoadImageData,
+	// then ticks LoadingTextures progress. IMPORTANT: passes nullptr as LoadImageData's own
+	// user_data, NOT our ImageLoadContext - tinygltf::LoadImageData() reinterpret_casts a
+	// non-null user_data to LoadImageDataOption*, so forwarding our context there would read
+	// garbage. nullptr matches the behavior tinygltf uses by default when SetImageLoader() is
+	// never called at all, so this is not a behavior change vs. the old unhooked path.
+	static bool realImageLoader(
+		tinygltf::Image* image,
+		const int imageIdx,
+		std::string* err,
+		std::string* warn,
+		int reqWidth,
+		int reqHeight,
+		const unsigned char* bytes,
+		int size,
+		void* userData
+	) {
+		auto* ctx = static_cast<ImageLoadContext*>(userData);
+
+		bool ok = tinygltf::LoadImageData(
+			image, imageIdx, err, warn, reqWidth, reqHeight, bytes, size, nullptr
+		);
+
+		if(ctx && ctx->progress && *ctx->progress) {
+			(*ctx->progress)(Stage::LoadingTextures, ++ctx->imagesLoaded, ctx->totalImages);
+		}
+
+		return ok;
+	}
+
+public:
 	osgDB::ReaderWriter::ReadResult read(
 		const std::string& location,
 		bool isBinary,
@@ -120,6 +196,7 @@ public:
 		std::string err, warn;
 		tinygltf::Model model;
 		tinygltf::TinyGLTF loader;
+		ImageLoadContext imageLoadContext;
 
 		tinygltf::FsCallbacks fs;
 
@@ -133,17 +210,45 @@ public:
 
 		GLTF_NOTIFY(0) << "loading " << location << std::endl;
 
-		if(progress) progress("parsing glTF", 0, 1);
+		if(progress) progress(Stage::Parsing, 0, 1);
 
-		// tinygltf's own file/buffer/image decode is one opaque blocking call -- no
-		// intermediate progress is available from inside it without hooking its
-		// image-loader callback, which is a bigger lift than this stage warrants.
+		// Cheap metadata-only pre-pass: parses the JSON header (and resolves buffer/image
+		// URIs) without decoding any image bytes, purely to learn the real image count up
+		// front so LoadingTextures below can report a real total instead of an
+		// indeterminate one. Reuses the same no-op image loader osgGLTF-python.cpp's
+		// inspect(load_images=False) already relies on for the identical reason.
+		{
+			tinygltf::Model countModel;
+			tinygltf::TinyGLTF counter;
+			std::string countErr, countWarn;
+
+			counter.SetFsCallbacks(fs);
+			counter.SetImageLoader(&skipImageLoad, nullptr);
+
+			bool countOk = isBinary
+				? counter.LoadBinaryFromFile(&countModel, &countErr, &countWarn, location)
+				: counter.LoadASCIIFromFile (&countModel, &countErr, &countWarn, location)
+			;
+
+			imageLoadContext.totalImages = countOk ? countModel.images.size() : 0;
+		}
+
+		if(progress) progress(Stage::Parsing, 1, 1);
+
+		imageLoadContext.progress = &progress;
+		imageLoadContext.imagesLoaded = 0;
+
+		if(progress) progress(Stage::LoadingTextures, 0, imageLoadContext.totalImages);
+
+		loader.SetImageLoader(&realImageLoader, &imageLoadContext);
+
+		// tinygltf's own file/buffer decode is one opaque blocking call, but image decode
+		// (the real bottleneck for texture-heavy assets) is now hooked via realImageLoader
+		// above, so LoadingTextures progress ticks in real time as each image finishes.
 		bool ok = isBinary
 			? loader.LoadBinaryFromFile(&model, &err, &warn, location)
 			: loader.LoadASCIIFromFile (&model, &err, &warn, location)
 		;
-
-		if(progress) progress("parsing glTF", 1, 1);
 
 		if(!warn.empty()) OSG_WARN << "" << location << ": " << warn << std::endl;
 
@@ -302,11 +407,11 @@ public:
 		progress(p) {
 			nodeTransforms.resize(m.nodes.size());
 
-			GLTF_NOTIFY(0) << "extractArrays -- " << m.accessors.size() << " accessor(s)" << std::endl;
+			GLTF_NOTIFY(0) << "extractArrays - " << m.accessors.size() << " accessor(s)" << std::endl;
 
 			extractArrays();
 
-			GLTF_NOTIFY(0) << "extractArrays done -- " << arrays.size() << " array(s) built" << std::endl;
+			GLTF_NOTIFY(0) << "extractArrays done - " << arrays.size() << " array(s) built" << std::endl;
 
 			prepareSkins();
 		}
@@ -324,11 +429,11 @@ public:
 				<< " children=" << node.children.size() << std::endl
 			;
 
-			// One tick per node regardless of depth -- model.nodes.size() covers every
+			// One tick per node regardless of depth - model.nodes.size() covers every
 			// node in the file, not just ones reachable from the active scene, so this
 			// is an upper-bound denominator (progress may not hit exactly 100% for a
 			// model with unreferenced nodes, which is rare and harmless for a bar).
-			if(progress) progress("building nodes", ++nodesBuilt, model.nodes.size());
+			if(progress) progress(Stage::BuildingNodes, ++nodesBuilt, model.nodes.size());
 
 			osg::MatrixTransform* mt = new osg::MatrixTransform();
 
@@ -691,7 +796,7 @@ public:
 			GLTF_NOTIFY(1)
 				<< "makeMesh '" << mesh.name
 				<< "' skin=" << skinIdx
-				<< " -- " << mesh.primitives.size() << " primitive(s)" << std::endl
+				<< " - " << mesh.primitives.size() << " primitive(s)" << std::endl
 			;
 
 			osg::Group* group = new osg::Group();
@@ -716,7 +821,7 @@ public:
 
 				osg::Vec4 baseColorFactor(1, 1, 1, 1);
 
-				// vertex attributes -- parsed before material application since
+				// vertex attributes - parsed before material application since
 				// texture-unit binding needs to know which UV set (TEXCOORD_n)
 				// each texture actually asks for.
 				GLTF_NOTIFY(3) << "attributes:" << std::endl;
@@ -806,7 +911,7 @@ public:
 					geom->setColorArray(colors, osg::Array::BIND_PER_VERTEX);
 				}
 
-				// index primitive set -- handles uint8, uint16, uint32
+				// index primitive set - handles uint8, uint16, uint32
 				if(
 					primitive.indices >= 0 &&
 					primitive.indices < static_cast<int>(arrays.size()) &&
@@ -863,7 +968,7 @@ public:
 				}
 
 				// Auto-generate normals for triangle primitives that don't supply them.
-				// SmoothingVisitor assumes triangles -- never call it on points/lines.
+				// SmoothingVisitor assumes triangles - never call it on points/lines.
 				bool isTriangles = (
 					primitive.mode == TINYGLTF_MODE_TRIANGLES ||
 					primitive.mode == TINYGLTF_MODE_TRIANGLE_STRIP ||
@@ -899,7 +1004,7 @@ public:
 
 		// ---- material ------------------------------------------------ //
 		// Fixed-function multitexturing ties "which GL texture unit" to "which
-		// TexCoordArray is bound to that unit" -- so each texture channel gets a
+		// TexCoordArray is bound to that unit" - so each texture channel gets a
 		// fixed unit (base/diffuse=0, normal=1, MR/specGloss=2, emissive=3), but
 		// the UV data bound to that unit must match what the texture actually
 		// requests via textureInfo.texCoord, not just whatever happened to be
@@ -955,11 +1060,11 @@ public:
 			);
 
 			// metallicRoughnessTexture and occlusionTexture are often the same
-			// image (R=occlusion, G=roughness, B=metallic) -- when they share
+			// image (R=occlusion, G=roughness, B=metallic) - when they share
 			// the same texture index, the plain bind below already carries
 			// correct AO in R. When occlusionTexture is a genuinely separate
 			// image (e.g. SciFiHelmet), bake the two together so real
-			// per-pixel AO isn't silently dropped -- downstream shaders
+			// per-pixel AO isn't silently dropped - downstream shaders
 			// (09-ibl.py) gate their AO read on the hasOcclusion uniform
 			// (exported below) rather than trusting an "unused" R channel
 			// when no occlusionTexture is present at all.
@@ -992,7 +1097,7 @@ public:
 						GLTF_NOTIFY(3)
 							<< "material " << matIdx
 							<< ": occlusionTexture and metallicRoughnessTexture use"
-							<< " different UV sets -- occlusion bake assumes they"
+							<< " different UV sets - occlusion bake assumes they"
 							<< " share the same UV space; result may be UV-mismatched" << std::endl
 						;
 					}
@@ -1053,12 +1158,12 @@ public:
 				true
 			);
 
-			// KHR_materials_pbrSpecularGlossiness -- legacy but still valid,
+			// KHR_materials_pbrSpecularGlossiness - legacy but still valid,
 			// real Sketchfab-era content uses it, sometimes extension-only
 			// with no core pbrMetallicRoughness fallback. Converted to the
 			// core metallic-roughness workflow at load time (see
 			// bakeSpecGlossToMetalRough) rather than binding
-			// specularGlossinessTexture straight into the ORM slot -- that
+			// specularGlossinessTexture straight into the ORM slot - that
 			// texture's channels (RGB=specular color/F0, A=glossiness) don't
 			// mean the same thing as ORM's (R=AO, G=roughness, B=metallic),
 			// so a direct bind previously fed the shader's Cook-Torrance path
@@ -1123,7 +1228,7 @@ public:
 					// below and falls back to a raw pass-through of
 					// diffuseTexture/specularGlossinessTexture, for callers
 					// that implement their own spec-gloss BRDF shader branch
-					// (Sketchfab's own viewer takes this approach -- its
+					// (Sketchfab's own viewer takes this approach - its
 					// Model Inspector panel lists Albedo/Specular/Glossiness
 					// as native channels, not a converted metallic-roughness
 					// pair) and would rather skip the bake's load-time cost
@@ -1141,7 +1246,7 @@ public:
 					else {
 						// Every primitive that references this material would
 						// otherwise redo the full per-pixel bake from
-						// scratch -- for a mesh whose parts all share one
+						// scratch - for a mesh whose parts all share one
 						// material (the common case), that's an N-way
 						// redundant multi-second cost for identical output.
 						// Cache by referrer+matIdx, same TextureCache the
@@ -1169,7 +1274,7 @@ public:
 							// textures share the same UV layout. texCoord
 							// index alone doesn't prove that, but it's the
 							// cheapest signal we have without comparing UV
-							// accessor data -- warn instead of silently
+							// accessor data - warn instead of silently
 							// mis-rendering.
 							if(
 								diffuseIdx >= 0 &&
@@ -1180,7 +1285,7 @@ public:
 									<< "material " << matIdx
 									<< ": diffuseTexture and specularGlossinessTexture use"
 									" different UV sets (" << diffuseTexCoord << " vs "
-									<< specGlossTexCoord << ") -- spec-gloss bake assumes they"
+									<< specGlossTexCoord << ") - spec-gloss bake assumes they"
 									" share the same UV space; result may be UV-mismatched"
 									<< std::endl
 								;
@@ -1189,6 +1294,21 @@ public:
 							osg::ref_ptr<osg::Image> diffuseImg = loadRawImage(diffuseIdx);
 							osg::ref_ptr<osg::Image> specGlossImg = loadRawImage(specGlossIdx);
 							osg::ref_ptr<osg::Image> bakedBaseColor, bakedOrm;
+
+							// Hint for next time someone sees a multi-second stall between
+							// "building nodes" ticks: this CPU per-pixel bake (single-threaded,
+							// no SIMD) is the culprit, not I/O or a hang. Cost scales with the
+							// larger of diffuseImg/specGlossImg - a 2048x2048 pair alone runs
+							// ~2s. TODO: row-parallelize (std::thread/OpenMP) once this becomes
+							// a real bottleneck for more assets.
+							GLTF_NOTIFY(3)
+								<< "material " << matIdx << ": baking specGloss -> metal-rough ("
+								<< (diffuseImg.valid() ? diffuseImg->s() : 0) << "x"
+								<< (diffuseImg.valid() ? diffuseImg->t() : 0) << " diffuse, "
+								<< (specGlossImg.valid() ? specGlossImg->s() : 0) << "x"
+								<< (specGlossImg.valid() ? specGlossImg->t() : 0) << " specGloss)"
+								" - single-threaded CPU bake, may take a moment" << std::endl
+							;
 
 							bakeSpecGlossToMetalRough(
 								diffuseImg.get(),
@@ -1210,7 +1330,7 @@ public:
 
 							// Baked images are already linear (converted, not
 							// merely re-encoded), so bind them with
-							// sRGB=false -- GPU sRGB decode must not run twice.
+							// sRGB=false - GPU sRGB decode must not run twice.
 							bcTex = new osg::Texture2D(bakedBaseColor.get());
 
 							applyTextureFormatAndSampler(bcTex.get(), bakedBaseColor.get(), false, samplerIdx);
@@ -1234,7 +1354,7 @@ public:
 
 						// The bake always produces a real (at-least-1x1) baseColor
 						// + ORM texture even for factor-only spec-gloss materials
-						// -- see bakeSpecGlossToMetalRough's comment -- so both
+						// - see bakeSpecGlossToMetalRough's comment -- so both
 						// slots are genuinely populated from here on, regardless
 						// of what the core pbrMetallicRoughness JSON block did or
 						// didn't declare.
@@ -1251,7 +1371,7 @@ public:
 
 						// metallicFactor/roughnessFactor uniforms (added
 						// below) default to 1.0 for extension-only materials
-						// -- tinygltf always populates pbrMetallicRoughness
+						// - tinygltf always populates pbrMetallicRoughness
 						// with spec defaults even without a core JSON block
 						// present, so the baked-in per-pixel metallic/
 						// roughness above won't get double-multiplied.
@@ -1260,13 +1380,13 @@ public:
 			}
 
 			// Export the material as a single osgGLTF_Material UBO for downstream PBR shaders
-			// (e.g. pyosg-lighting/09-ibl.py) instead of one osg::Uniform per field -- this is
+			// (e.g. pyosg-lighting/09-ibl.py) instead of one osg::Uniform per field - this is
 			// this plugin's own extension to the material contract, not part of OSG's osg_*
 			// built-in uniform set, so it's namespaced (block name + binding) to avoid colliding
 			// with an unrelated shader's own material uniforms.
 			//
 			// std140 layout (must match the GLSL `layout(std140, binding = N) uniform
-			// osgGLTF_Material { ... }` block exactly -- see 09-ibl.py):
+			// osgGLTF_Material { ... }` block exactly - see 09-ibl.py):
 			//
 			// vec4 baseColorFactor offset 0 (16 bytes)
 			// float roughnessFactor offset 16
@@ -1278,7 +1398,7 @@ public:
 			// (2 floats padding to round the block up to a multiple of 16) offset 40, 44
 			//
 			// haveOcclusion/haveMetallicRoughnessMap/haveCoreBaseColor/haveNormalMap are gates so
-			// a factor-only material (no texture at all -- e.g. Fox's roughnessFactor=0.58 with
+			// a factor-only material (no texture at all - e.g. Fox's roughnessFactor=0.58 with
 			// no metallicRoughnessTexture) doesn't get its authored factor silently discarded by
 			// an unconditional texture() read of an unbound unit.
 			osg::ref_ptr<osg::FloatArray> materialData = new osg::FloatArray(12);
@@ -1312,9 +1432,23 @@ public:
 				geom->getOrCreateStateSet()->setMode(GL_BLEND, osg::StateAttribute::ON);
 				geom->getOrCreateStateSet()->setRenderingHint(osg::StateSet::TRANSPARENT_BIN);
 			}
+
+			// Per the glTF spec, doubleSided disables backface culling for THIS
+			// material specifically (thin single-sided sheets like capes/cloth/leaves
+			// with no back geometry, meant to be visible and lit from both sides).
+			// readTopNode() enables GL_CULL_FACE unconditionally at the root; this
+			// per-geometry override on the child StateSet takes precedence over that
+			// ancestor mode (no OVERRIDE flag was used at the root, so normal OSG
+			// StateSet inheritance already lets a more-specific child win). The
+			// matching back-face normal flip belongs in whatever fragment shader
+			// consumes this geometry (gl_FrontFacing-based) -- not this loader's
+			// concern, since osgGLTF doesn't ship its own PBR shader.
+			if(mat.doubleSided) {
+				geom->getOrCreateStateSet()->setMode(GL_CULL_FACE, osg::StateAttribute::OFF);
+			}
 		}
 
-		// Decodes a glTF texture's source image to raw pixel data -- no GL
+		// Decodes a glTF texture's source image to raw pixel data - no GL
 		// format/sRGB tagging, no caching. Shared by getOrCreateTexture()
 		// and the spec-gloss->metal-rough bake below, which both need pixel
 		// access independent of how the image ends up being sampled.
@@ -1452,7 +1586,7 @@ public:
 		// it, sometimes extension-only with no core pbrMetallicRoughness fallback. Rather than give
 		// a shader a second BRDF path to maintain, convert to the core metallic-roughness workflow
 		// at load time using the standard reference formula from the (archived) extension spec /
-		// glTF-Sample-Viewer / three.js -- the same approach those engines use when they don't
+		// glTF-Sample-Viewer / three.js - the same approach those engines use when they don't
 		// carry a native spec-gloss BRDF. Must be per-pixel, not per-factor: real content (e.g.
 		// Sketchfab's "Dead Space" suit) carries per-part variation in the specular/glossiness
 		// texture, not just flat material factors.
@@ -1476,7 +1610,7 @@ public:
 		}
 
 		// Bakes new baseColor (linear, for unit 0) + ORM-style (unit 2:
-		// R=AO placeholder -- spec-gloss has no occlusion channel, G=roughness,
+		// R=AO placeholder - spec-gloss has no occlusion channel, G=roughness,
 		// B=metallic) images. Either source image may be null (factor-only
 		// material); output is always at least 1x1 so callers can bind
 		// unconditionally.
@@ -1594,7 +1728,7 @@ public:
 
 		// ---- separate occlusionTexture merge --------------------------- //
 		// Only needed when occlusionTexture is a genuinely distinct image
-		// from metallicRoughnessTexture (e.g. SciFiHelmet) -- the common
+		// from metallicRoughnessTexture (e.g. SciFiHelmet) - the common
 		// "packed ORM" convention (same texture index for both) already
 		// carries correct AO in R via the plain metallicRoughnessTexture
 		// bind and never reaches this function. `strength` is baked in
