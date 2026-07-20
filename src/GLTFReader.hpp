@@ -58,10 +58,10 @@
 // GLTF_JOINT_MATRICES_BINDING (an SSBO binding, declared in GLTFReader-Skin.hpp).
 static constexpr GLuint GLTF_MATERIAL_UBO_BINDING = 0;
 
-inline std::ostream& gltfNotify(osg::NotifySeverity severity, unsigned indent = 0) {
+inline std::ostream& gltfNotify(osg::NotifySeverity severity, size_t indent=0) {
 	std::ostream& out = osg::notify(severity) << "[GLTF] ";
 
-	for(unsigned i = 0; i < indent; ++i) out << "  ";
+	for(size_t i = 0; i < indent; i++) out << "  ";
 
 	return out;
 }
@@ -281,7 +281,7 @@ public:
 			<< model.animations.size() << " animation(s)" << std::endl
 		;
 
-		for(size_t skinIdx = 0; skinIdx < model.skins.size(); ++skinIdx) {
+		for(size_t skinIdx = 0; skinIdx < model.skins.size(); skinIdx++) {
 			const auto& skin = model.skins[skinIdx];
 
 			GLTF_NOTIFY(1)
@@ -291,7 +291,7 @@ public:
 				<< " inverseBindMatrices=" << skin.inverseBindMatrices << std::endl
 			;
 
-			for(size_t jointIdx = 0; jointIdx < skin.joints.size(); ++jointIdx) {
+			for(size_t jointIdx = 0; jointIdx < skin.joints.size(); jointIdx++) {
 				int nodeIdx = skin.joints[jointIdx];
 				const char* nodeName =
 					nodeIdx >= 0 && nodeIdx < static_cast<int>(model.nodes.size())
@@ -307,7 +307,7 @@ public:
 			}
 		}
 
-		for(size_t animIdx = 0; animIdx < model.animations.size(); ++animIdx) {
+		for(size_t animIdx = 0; animIdx < model.animations.size(); animIdx++) {
 			const auto& animation = model.animations[animIdx];
 
 			GLTF_NOTIFY(1)
@@ -316,7 +316,7 @@ public:
 				<< " samplers=" << animation.samplers.size() << std::endl
 			;
 
-			for(size_t samplerIdx = 0; samplerIdx < animation.samplers.size(); ++samplerIdx) {
+			for(size_t samplerIdx = 0; samplerIdx < animation.samplers.size(); samplerIdx++) {
 				const auto& sampler = animation.samplers[samplerIdx];
 
 				GLTF_NOTIFY(2)
@@ -327,7 +327,7 @@ public:
 				;
 			}
 
-			for(size_t channelIdx = 0; channelIdx < animation.channels.size(); ++channelIdx) {
+			for(size_t channelIdx = 0; channelIdx < animation.channels.size(); channelIdx++) {
 				const auto& channel = animation.channels[channelIdx];
 				const char* nodeName =
 					channel.target_node >= 0 &&
@@ -486,7 +486,7 @@ public:
 		void prepareSkins() {
 			skins.reserve(model.skins.size());
 
-			for(size_t skinIdx = 0; skinIdx < model.skins.size(); ++skinIdx) {
+			for(size_t skinIdx = 0; skinIdx < model.skins.size(); skinIdx++) {
 				const tinygltf::Skin& src = model.skins[skinIdx];
 				osg::ref_ptr<GLTFSkin> skin = new GLTFSkin();
 
@@ -547,13 +547,32 @@ public:
 		}
 
 		void resolveSkinJointNodes() {
+			// Built once for the whole model (not per-skin): glTF node index -> its parent's node
+			// index, derived from node.children since tinygltf doesn't expose parent pointers.
+			std::unordered_map<int, int> nodeParent;
+
+			for(size_t nodeIdx = 0; nodeIdx < model.nodes.size(); nodeIdx++) {
+				for(int childIdx : model.nodes[nodeIdx].children) {
+					nodeParent[childIdx] = static_cast<int>(nodeIdx);
+				}
+			}
+
 			for(auto& skinRef : skins) {
 				GLTFSkin* skin = skinRef.get();
 				if(!skin) continue;
 
 				size_t resolved = 0;
+				std::unordered_map<int, int> nodeIdxToJointIdx;
 
-				for(size_t jointIdx = 0; jointIdx < skin->joints.size(); ++jointIdx) {
+				for(size_t jointIdx = 0; jointIdx < skin->joints.size(); jointIdx++) {
+					nodeIdxToJointIdx[skin->joints[jointIdx]] = static_cast<int>(jointIdx);
+				}
+
+				skin->parentJointIndex.assign(skin->joints.size(), -1);
+				skin->jointWorldCache.resize(skin->joints.size());
+				skin->jointWorldComputed.resize(skin->joints.size());
+
+				for(size_t jointIdx = 0; jointIdx < skin->joints.size(); jointIdx++) {
 					int nodeIdx = skin->joints[jointIdx];
 
 					if(
@@ -562,7 +581,17 @@ public:
 						nodeTransforms[nodeIdx].valid()
 					) {
 						skin->jointNodes[jointIdx] = nodeTransforms[nodeIdx].get();
-						++resolved;
+						resolved++;
+					}
+
+					auto parentNode = nodeParent.find(nodeIdx);
+
+					if(parentNode != nodeParent.end()) {
+						auto parentJoint = nodeIdxToJointIdx.find(parentNode->second);
+
+						if(parentJoint != nodeIdxToJointIdx.end()) {
+							skin->parentJointIndex[jointIdx] = parentJoint->second;
+						}
 					}
 				}
 
@@ -624,7 +653,7 @@ public:
 
 			osg::ref_ptr<GLTFAnimationCallback> callback = new GLTFAnimationCallback();
 
-			for(size_t animIdx = 0; animIdx < model.animations.size(); ++animIdx) {
+			for(size_t animIdx = 0; animIdx < model.animations.size(); animIdx++) {
 				const tinygltf::Animation& animation = model.animations[animIdx];
 				GLTFAnimationCallback::Clip clip;
 
@@ -633,7 +662,7 @@ public:
 					: animation.name
 				;
 
-				for(size_t channelIdx = 0; channelIdx < animation.channels.size(); ++channelIdx) {
+				for(size_t channelIdx = 0; channelIdx < animation.channels.size(); channelIdx++) {
 				const tinygltf::AnimationChannel& gltfChannel = animation.channels[channelIdx];
 
 				if(
@@ -727,7 +756,7 @@ public:
 
 			size_t initialAnimation = 0;
 
-			for(size_t i = 0; i < model.animations.size(); ++i) {
+			for(size_t i = 0; i < model.animations.size(); i++) {
 				if(model.animations[i].name == "Walk") {
 					initialAnimation = i;
 					break;
@@ -996,7 +1025,7 @@ public:
 
 				group->addChild(geode);
 
-				++primIdx;
+				primIdx++;
 			}
 
 			return group;
@@ -1650,8 +1679,8 @@ public:
 			auto* baseColorData = new unsigned char[static_cast<size_t>(w) * h * 4];
 			auto* ormData = new unsigned char[static_cast<size_t>(w) * h * 3];
 
-			for(int y = 0; y < h; ++y) {
-				for(int x = 0; x < w; ++x) {
+			for(int y = 0; y < h; y++) {
+				for(int x = 0; x < w; x++) {
 					osg::Vec4 dTex = diffuseR ? diffuseR->getColor(x, y) : osg::Vec4(1, 1, 1, 1);
 					osg::Vec4 sgTex = specGlossR ? specGlossR->getColor(x, y) : osg::Vec4(1, 1, 1, 1);
 
@@ -1770,8 +1799,8 @@ public:
 
 			auto* ormData = new unsigned char[static_cast<size_t>(w) * h * 3];
 
-			for(int y = 0; y < h; ++y) {
-				for(int x = 0; x < w; ++x) {
+			for(int y = 0; y < h; y++) {
+				for(int x = 0; x < w; x++) {
 					osg::Vec4 occTex = occR ? occR->getColor(x, y) : osg::Vec4(1, 1, 1, 1);
 					osg::Vec4 mrTex = mrR ? mrR->getColor(x, y) : osg::Vec4(1, 1, 1, 1);
 					float ao = 1.0f + strength * (occTex.x() - 1.0f);
@@ -1826,7 +1855,7 @@ public:
 				if(bv.byteStride == 0) memcpy(&(*arr)[0], src, compSize * numComp * acc.count);
 
 				else {
-					for(size_t i = 0; i < acc.count; ++i, src += bv.byteStride) memcpy(
+					for(size_t i = 0; i < acc.count; i++, src += bv.byteStride) memcpy(
 						&(*arr)[i],
 						src,
 						compSize * numComp
@@ -1860,7 +1889,7 @@ public:
 
 					arrays.push_back({});
 
-					++accIdx;
+					accIdx++;
 
 					continue;
 				}
@@ -1955,7 +1984,7 @@ public:
 
 				arrays.push_back(a);
 
-				++accIdx;
+				accIdx++;
 			}
 		}
 	};
