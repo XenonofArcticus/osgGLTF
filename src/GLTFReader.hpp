@@ -20,6 +20,8 @@
 #include <osg/MatrixTransform>
 #include <osg/Texture2D>
 #include <osg/CullFace>
+#include <osg/BlendFunc>
+#include <osg/Depth>
 #include <osg/Notify>
 #include <osg/Math>
 
@@ -1457,9 +1459,37 @@ public:
 				osg::StateAttribute::ON
 			);
 
-			if(mat.alphaMode == "BLEND" || mat.alphaMode == "MASK") {
-				geom->getOrCreateStateSet()->setMode(GL_BLEND, osg::StateAttribute::ON);
-				geom->getOrCreateStateSet()->setRenderingHint(osg::StateSet::TRANSPARENT_BIN);
+
+			// Alpha coverage is a core glTF material property, but osgGLTF deliberately
+			// does not impose a particular PBR shader. Export its values as namespaced
+			// uniforms so downstream shaders can apply the required fragment discard
+			// (MASK) or write the source alpha (BLEND). alphaMode is encoded as:
+			// 0 = OPAQUE, 1 = MASK, 2 = BLEND. The glTF default alphaCutoff is 0.5.
+			float alphaMode = 0.0f;
+			if(mat.alphaMode == "MASK") alphaMode = 1.0f;
+			else if(mat.alphaMode == "BLEND") alphaMode = 2.0f;
+
+			auto* stateSet = geom->getOrCreateStateSet();
+			stateSet->addUniform(new osg::Uniform("osgGLTF_alphaMode", alphaMode));
+			stateSet->addUniform(new osg::Uniform(
+				"osgGLTF_alphaCutoff",
+				static_cast<float>(mat.alphaCutoff)
+			));
+
+			if(mat.alphaMode == "BLEND") {
+				// glTF BLEND uses conventional non-premultiplied source-over alpha.
+				// Render it after opaque geometry and leave depth testing enabled while
+				// preventing a transparent surface from occluding later transparent draws.
+				stateSet->setMode(GL_BLEND, osg::StateAttribute::ON);
+				stateSet->setAttributeAndModes(
+					new osg::BlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA),
+					osg::StateAttribute::ON
+				);
+				stateSet->setAttributeAndModes(
+					new osg::Depth(osg::Depth::LEQUAL, 0.0, 1.0, false),
+					osg::StateAttribute::ON
+				);
+				stateSet->setRenderingHint(osg::StateSet::TRANSPARENT_BIN);
 			}
 
 			// Per the glTF spec, doubleSided disables backface culling for THIS
