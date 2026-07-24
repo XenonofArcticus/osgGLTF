@@ -19,6 +19,9 @@ This code is a patched version of the [osgEarth](https://github.com/gwaldron/osg
 reference implementation. Many thanks to [Pelican
 Mapping](https://www.pelicanmapping.com/) for doing 95% of the work!
 
+Be sure and call `osgDB::Registry::instance()->addFileExtensionAlias("glb", "gltf");`
+if you want to support GLB loading easily!
+
 ## IBL Baking
 
 The GPU IBL baker is available as both a command-line tool and a small C++ API.
