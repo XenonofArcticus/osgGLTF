@@ -6,6 +6,7 @@
 #define TINYGLTF_NOEXCEPTION
 
 #include "osgGLTF/IBLBaker.hpp"
+#include "osgGLTF/Shader.hpp"
 #include "osgGLTF/SimplePlayer.hpp"
 
 #include <osg/Image>
@@ -647,6 +648,41 @@ osg::ref_ptr<osg::Node> readNodeFileAsync(
 
 PYBIND11_MODULE(osgGLTF, m) {
 	auto py_osg = py::module_::import("OpenSceneGraph");
+	auto m_shader = m.def_submodule(
+		"shader",
+		"Shader inputs and setup matching the scene state populated by the osgGLTF loader"
+	);
+
+	m_shader.attr("TANGENT_ATTRIBUTE") = osgGLTF::shader::TANGENT_ATTRIBUTE;
+	m_shader.attr("JOINT_INDICES_ATTRIBUTE") = osgGLTF::shader::JOINT_INDICES_ATTRIBUTE;
+	m_shader.attr("JOINT_WEIGHTS_ATTRIBUTE") = osgGLTF::shader::JOINT_WEIGHTS_ATTRIBUTE;
+	m_shader.attr("TANGENT_ATTRIBUTE_NAME") = py::str(osgGLTF::shader::TANGENT_ATTRIBUTE_NAME);
+	m_shader.attr("JOINT_INDICES_ATTRIBUTE_NAME") =
+		py::str(osgGLTF::shader::JOINT_INDICES_ATTRIBUTE_NAME);
+	m_shader.attr("JOINT_WEIGHTS_ATTRIBUTE_NAME") =
+		py::str(osgGLTF::shader::JOINT_WEIGHTS_ATTRIBUTE_NAME);
+	m_shader.attr("MATERIAL_UBO_BINDING") = osgGLTF::shader::MATERIAL_UBO_BINDING;
+	m_shader.attr("JOINT_MATRICES_SSBO_BINDING") =
+		osgGLTF::shader::JOINT_MATRICES_SSBO_BINDING;
+	m_shader.attr("BASE_COLOR_TEXTURE_UNIT") = osgGLTF::shader::BASE_COLOR_TEXTURE_UNIT;
+	m_shader.attr("NORMAL_TEXTURE_UNIT") = osgGLTF::shader::NORMAL_TEXTURE_UNIT;
+	m_shader.attr("ORM_TEXTURE_UNIT") = osgGLTF::shader::ORM_TEXTURE_UNIT;
+	m_shader.attr("EMISSIVE_TEXTURE_UNIT") = osgGLTF::shader::EMISSIVE_TEXTURE_UNIT;
+	m_shader.attr("BASE_COLOR_SAMPLER") = py::str(osgGLTF::shader::BASE_COLOR_SAMPLER);
+	m_shader.attr("NORMAL_SAMPLER") = py::str(osgGLTF::shader::NORMAL_SAMPLER);
+	m_shader.attr("ORM_SAMPLER") = py::str(osgGLTF::shader::ORM_SAMPLER);
+	m_shader.attr("EMISSIVE_SAMPLER") = py::str(osgGLTF::shader::EMISSIVE_SAMPLER);
+	m_shader.attr("ALPHA_MODE_UNIFORM") = py::str(osgGLTF::shader::ALPHA_MODE_UNIFORM);
+	m_shader.attr("ALPHA_CUTOFF_UNIFORM") = py::str(osgGLTF::shader::ALPHA_CUTOFF_UNIFORM);
+	m_shader.attr("ALPHA_MODE_OPAQUE") = osgGLTF::shader::ALPHA_MODE_OPAQUE;
+	m_shader.attr("ALPHA_MODE_MASK") = osgGLTF::shader::ALPHA_MODE_MASK;
+	m_shader.attr("ALPHA_MODE_BLEND") = osgGLTF::shader::ALPHA_MODE_BLEND;
+	m_shader.attr("MATERIAL_INPUTS") = py::str(osgGLTF::shader::MATERIAL_INPUTS);
+
+	m_shader
+		.def("configureProgram", &osgGLTF::shader::configureProgram, "program"_a)
+		.def("configureStateSet", &osgGLTF::shader::configureStateSet, "stateSet"_a)
+	;
 
 	py::class_<osgGLTF::SimplePlayer>(m, "SimplePlayer")
 		.def(py::init<osg::Node*>(), "model"_a)

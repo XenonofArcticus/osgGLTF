@@ -6,11 +6,11 @@
 #include <osg/MatrixTransform>
 #include <osg/Transform>
 
+#include <osgGLTF/Shader.hpp>
+
 #include <algorithm>
 #include <string>
 #include <vector>
-
-static constexpr GLuint GLTF_JOINT_MATRICES_BINDING = 2;
 
 struct GLTFSkin: public osg::Referenced {
 	int index = -1;
@@ -119,7 +119,7 @@ public:
 				<< "updated skin[" << _skin->index << "] palette "
 				<< _skin->paletteMatrices->size()
 				<< " matrix/matrices at SSBO binding "
-				<< GLTF_JOINT_MATRICES_BINDING << std::endl
+				<< osgGLTF::shader::JOINT_MATRICES_SSBO_BINDING << std::endl
 			;
 		}
 

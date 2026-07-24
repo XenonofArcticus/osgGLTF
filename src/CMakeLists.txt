@@ -26,6 +26,7 @@ install(TARGETS osgGLTF
 
 install(FILES
 	osgGLTF/IBLBaker.hpp
+	osgGLTF/Shader.hpp
 	osgGLTF/SimplePlayer.hpp
 	DESTINATION ${CMAKE_INSTALL_PREFIX}/include/osgGLTF
 )

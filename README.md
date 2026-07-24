@@ -22,6 +22,34 @@ Mapping](https://www.pelicanmapping.com/) for doing 95% of the work!
 Be sure and call `osgDB::Registry::instance()->addFileExtensionAlias("glb", "gltf");`
 if you want to support GLB loading easily!
 
+## Shader Interface
+
+osgGLTF loads geometry and materials without imposing a particular renderer. The public
+`osgGLTF/Shader.hpp` header defines the attribute locations, buffer bindings, texture units,
+uniform names, and canonical GLSL material declaration populated by the loader.
+
+Custom renderers can use the GLSL declaration directly and apply the matching program setup:
+
+```cpp
+#include <osgGLTF/Shader.hpp>
+
+auto program = new osg::Program();
+auto stateSet = model->getOrCreateStateSet();
+
+// Add shaders using osgGLTF::shader::MATERIAL_INPUTS as part of the fragment source.
+osgGLTF::shader::configureProgram(*program);
+osgGLTF::shader::configureStateSet(*stateSet);
+
+stateSet->setAttributeAndModes(program);
+```
+
+`configureProgram()` maps the tangent and skinning inputs to the locations used by the loader.
+`configureStateSet()` maps the material samplers to the loader's base-color, normal, ORM, and
+emissive texture units. These helpers are optional; the named constants in the same header can be
+used when an application needs different program or StateSet ownership.
+
+The Python bindings expose the same constants, GLSL source, and helpers under `osgGLTF.shader`.
+
 ## IBL Baking
 
 The GPU IBL baker is available as both a command-line tool and a small C++ API.

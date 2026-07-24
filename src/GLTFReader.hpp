@@ -32,6 +32,8 @@
 #include <osgDB/ReaderWriter>
 #include <osgDB/Registry>
 
+#include <osgGLTF/Shader.hpp>
+
 #include <algorithm>
 #include <cmath>
 #include <cstdlib>
@@ -54,11 +56,6 @@
 
 // Change this to osg::INFO/osg::DEBUG_INFO/etc. to reduce verbosity.
 #define GLTF_NOTIFY_SEVERITY osg::NOTICE
-
-// UBO binding for the per-primitive osgGLTF_Material block (see applyMaterial() below). UBO and
-// SSBO binding points are separate GL namespaces, so this doesn't need to avoid
-// GLTF_JOINT_MATRICES_BINDING (an SSBO binding, declared in GLTFReader-Skin.hpp).
-static constexpr GLuint GLTF_MATERIAL_UBO_BINDING = 0;
 
 inline std::ostream& gltfNotify(osg::NotifySeverity severity, size_t indent=0) {
 	std::ostream& out = osg::notify(severity) << "[GLTF] ";
@@ -622,7 +619,7 @@ public:
 
 					skinnedNode->getOrCreateStateSet()->setAttributeAndModes(
 						new osg::ShaderStorageBufferBinding(
-							GLTF_JOINT_MATRICES_BINDING,
+							osgGLTF::shader::JOINT_MATRICES_SSBO_BINDING,
 							skin->paletteMatrices.get(),
 							0,
 							totalSize
@@ -635,7 +632,7 @@ public:
 					GLTF_NOTIFY(1)
 						<< "installed skin[" << skin->index << "] palette callback on '"
 						<< skinnedNode->getName() << "'"
-						<< " SSBO binding=" << GLTF_JOINT_MATRICES_BINDING
+						<< " SSBO binding=" << osgGLTF::shader::JOINT_MATRICES_SSBO_BINDING
 						<< " bytes=" << totalSize << std::endl
 					;
 				}
@@ -882,7 +879,10 @@ public:
 					else if(attrName == "TANGENT") {
 						arrays[accessorIdx]->setBinding(osg::Array::BIND_PER_VERTEX);
 
-						geom->setVertexAttribArray(7, arrays[accessorIdx].get());
+						geom->setVertexAttribArray(
+							osgGLTF::shader::TANGENT_ATTRIBUTE,
+							arrays[accessorIdx].get()
+						);
 					}
 					else if(attrName.rfind("TEXCOORD_", 0) == 0) {
 						int uvSet = std::atoi(attrName.c_str() + 9);
@@ -905,12 +905,18 @@ public:
 						if(jointsAccessor >= 0) {
 							arrays[jointsAccessor]->setBinding(osg::Array::BIND_PER_VERTEX);
 							arrays[jointsAccessor]->setPreserveDataType(true);
-							geom->setVertexAttribArray(8, arrays[jointsAccessor].get());
+							geom->setVertexAttribArray(
+								osgGLTF::shader::JOINT_INDICES_ATTRIBUTE,
+								arrays[jointsAccessor].get()
+							);
 						}
 
 						if(weightsAccessor >= 0) {
 							arrays[weightsAccessor]->setBinding(osg::Array::BIND_PER_VERTEX);
-							geom->setVertexAttribArray(9, arrays[weightsAccessor].get());
+							geom->setVertexAttribArray(
+								osgGLTF::shader::JOINT_WEIGHTS_ATTRIBUTE,
+								arrays[weightsAccessor].get()
+							);
 						}
 					}
 
@@ -1075,7 +1081,7 @@ public:
 			bool haveCoreBaseColor = pbr.baseColorTexture.index >= 0;
 
 			if(haveCoreBaseColor) bindTexture(
-				0,
+				osgGLTF::shader::BASE_COLOR_TEXTURE_UNIT,
 				pbr.baseColorTexture.index,
 				pbr.baseColorTexture.texCoord,
 				true
@@ -1084,7 +1090,7 @@ public:
 			bool haveNormalMap = mat.normalTexture.index >= 0;
 
 			if(haveNormalMap) bindTexture(
-				1,
+				osgGLTF::shader::NORMAL_TEXTURE_UNIT,
 				mat.normalTexture.index,
 				mat.normalTexture.texCoord,
 				false
@@ -1165,25 +1171,28 @@ public:
 					}
 				}
 
-				geom->getOrCreateStateSet()->setTextureAttributeAndModes(2, ormTex.get());
+				geom->getOrCreateStateSet()->setTextureAttributeAndModes(
+					osgGLTF::shader::ORM_TEXTURE_UNIT,
+					ormTex.get()
+				);
 
 				auto occTexCoordIt = texCoordSets.find(mat.occlusionTexture.texCoord);
 
 				if(occTexCoordIt != texCoordSets.end()) geom->setTexCoordArray(
-					2,
+					osgGLTF::shader::ORM_TEXTURE_UNIT,
 					occTexCoordIt->second
 				);
 			}
 
 			else if(pbr.metallicRoughnessTexture.index >= 0) bindTexture(
-				2,
+				osgGLTF::shader::ORM_TEXTURE_UNIT,
 				pbr.metallicRoughnessTexture.index,
 				pbr.metallicRoughnessTexture.texCoord,
 				false
 			);
 
 			if(mat.emissiveTexture.index >= 0) bindTexture(
-				3,
+				osgGLTF::shader::EMISSIVE_TEXTURE_UNIT,
 				mat.emissiveTexture.index,
 				mat.emissiveTexture.texCoord,
 				true
@@ -1270,8 +1279,18 @@ public:
 					;
 
 					if(skipSpecGlossBake) {
-						if(diffuseIdx >= 0) bindTexture(0, diffuseIdx, diffuseTexCoord, true);
-						if(specGlossIdx >= 0) bindTexture(2, specGlossIdx, specGlossTexCoord, true);
+						if(diffuseIdx >= 0) bindTexture(
+							osgGLTF::shader::BASE_COLOR_TEXTURE_UNIT,
+							diffuseIdx,
+							diffuseTexCoord,
+							true
+						);
+						if(specGlossIdx >= 0) bindTexture(
+							osgGLTF::shader::ORM_TEXTURE_UNIT,
+							specGlossIdx,
+							specGlossTexCoord,
+							true
+						);
 					}
 
 					else {
@@ -1380,8 +1399,14 @@ public:
 							}
 						}
 
-						geom->getOrCreateStateSet()->setTextureAttributeAndModes(0, bcTex.get());
-						geom->getOrCreateStateSet()->setTextureAttributeAndModes(2, ormTex.get());
+						geom->getOrCreateStateSet()->setTextureAttributeAndModes(
+							osgGLTF::shader::BASE_COLOR_TEXTURE_UNIT,
+							bcTex.get()
+						);
+						geom->getOrCreateStateSet()->setTextureAttributeAndModes(
+							osgGLTF::shader::ORM_TEXTURE_UNIT,
+							ormTex.get()
+						);
 
 						// The bake always produces a real (at-least-1x1) baseColor
 						// + ORM texture even for factor-only spec-gloss materials
@@ -1396,8 +1421,14 @@ public:
 						auto texCoordIt = texCoordSets.find(bakeTexCoord);
 
 						if(texCoordIt != texCoordSets.end()) {
-							geom->setTexCoordArray(0, texCoordIt->second);
-							geom->setTexCoordArray(2, texCoordIt->second);
+							geom->setTexCoordArray(
+								osgGLTF::shader::BASE_COLOR_TEXTURE_UNIT,
+								texCoordIt->second
+							);
+							geom->setTexCoordArray(
+								osgGLTF::shader::ORM_TEXTURE_UNIT,
+								texCoordIt->second
+							);
 						}
 
 						// metallicFactor/roughnessFactor uniforms (added
@@ -1451,7 +1482,7 @@ public:
 
 			geom->getOrCreateStateSet()->setAttributeAndModes(
 				new osg::UniformBufferBinding(
-					GLTF_MATERIAL_UBO_BINDING,
+					osgGLTF::shader::MATERIAL_UBO_BINDING,
 					materialData.get(),
 					0,
 					static_cast<GLsizeiptr>(materialData->getTotalDataSize())
@@ -1465,14 +1496,17 @@ public:
 			// uniforms so downstream shaders can apply the required fragment discard
 			// (MASK) or write the source alpha (BLEND). alphaMode is encoded as:
 			// 0 = OPAQUE, 1 = MASK, 2 = BLEND. The glTF default alphaCutoff is 0.5.
-			float alphaMode = 0.0f;
-			if(mat.alphaMode == "MASK") alphaMode = 1.0f;
-			else if(mat.alphaMode == "BLEND") alphaMode = 2.0f;
+			float alphaMode = osgGLTF::shader::ALPHA_MODE_OPAQUE;
+			if(mat.alphaMode == "MASK") alphaMode = osgGLTF::shader::ALPHA_MODE_MASK;
+			else if(mat.alphaMode == "BLEND") alphaMode = osgGLTF::shader::ALPHA_MODE_BLEND;
 
 			auto* stateSet = geom->getOrCreateStateSet();
-			stateSet->addUniform(new osg::Uniform("osgGLTF_alphaMode", alphaMode));
 			stateSet->addUniform(new osg::Uniform(
-				"osgGLTF_alphaCutoff",
+				osgGLTF::shader::ALPHA_MODE_UNIFORM,
+				alphaMode
+			));
+			stateSet->addUniform(new osg::Uniform(
+				osgGLTF::shader::ALPHA_CUTOFF_UNIFORM,
 				static_cast<float>(mat.alphaCutoff)
 			));
 
