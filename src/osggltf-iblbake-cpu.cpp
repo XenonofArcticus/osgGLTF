@@ -17,9 +17,10 @@
 #include <cassert>
 #include <cmath>
 #include <cstdint>
-#include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <iomanip>
+#include <iostream>
 #include <vector>
 
 #ifdef _OPENMP
@@ -68,16 +69,16 @@ static uint16_t f32_to_f16(float f)
 	uint32_t e = (bits.u >> 23) & 0xFFu;
 	uint32_t m = bits.u & 0x7FFFFFu;
 
-	if (e == 0xFF) return (uint16_t)((s << 15) | 0x7C00u | (m ? 0x200u : 0u)); // inf/nan
+	if (e == 0xFF) return static_cast<uint16_t>((s << 15) | 0x7C00u | (m ? 0x200u : 0u)); // inf/nan
 
-	int se = (int)e - 127 + 15;
-	if (se >= 31) return (uint16_t)((s << 15) | 0x7C00u); // overflow -> inf
+	int se = static_cast<int>(e) - 127 + 15;
+	if (se >= 31) return static_cast<uint16_t>((s << 15) | 0x7C00u); // overflow -> inf
 	if (se <= 0) {
-		if (se < -10) return (uint16_t)(s << 15); // underflow -> 0
-		uint32_t ms = (m | 0x800000u) >> (uint32_t)(14 - se);
-		return (uint16_t)((s << 15) | ms);
+		if (se < -10) return static_cast<uint16_t>(s << 15); // underflow -> 0
+		uint32_t ms = (m | 0x800000u) >> static_cast<uint32_t>(14 - se);
+		return static_cast<uint16_t>((s << 15) | ms);
 	}
-	return (uint16_t)((s << 15) | ((uint32_t)se << 10) | (m >> 13));
+	return static_cast<uint16_t>((s << 15) | (static_cast<uint32_t>(se) << 10) | (m >> 13));
 }
 
 // ---------------------------------------------------------------------------
@@ -104,7 +105,7 @@ static v3 sampleHDR(const float* img, int W, int H, v3 dir_gl)
 
 	float px = u * float(W - 1);
 	float py = v * float(H - 1);
-	int x0 = (int)px, y0 = (int)py;
+	int x0 = static_cast<int>(px), y0 = static_cast<int>(py);
 	int x1 = std::min(x0 + 1, W - 1);
 	int y1 = std::min(y0 + 1, H - 1);
 	float tx = px - float(x0), ty = py - float(y0);
@@ -229,9 +230,9 @@ static void bakeFaceMip(
 int main(int argc, char* argv[])
 {
 	if (argc < 3) {
-		fprintf(stderr,
-			"Usage: ibl-bake-cpu <input.hdr> <output.ktx2>"
-			" [--prefilter-size N] [--samples N]\n");
+		std::cerr
+			<< "Usage: ibl-bake-cpu <input.hdr> <output.ktx2>"
+			<< " [--prefilter-size N] [--samples N]" << std::endl;
 		return 1;
 	}
 
@@ -242,7 +243,7 @@ int main(int argc, char* argv[])
 
 	for (int i = 3; i < argc; ++i) {
 		if (!strcmp(argv[i], "--prefilter-size") && i+1 < argc) prefilterSize = std::atoi(argv[++i]);
-		if (!strcmp(argv[i], "--samples") && i+1 < argc) numSamples = (uint32_t)std::atoi(argv[++i]);
+		if (!strcmp(argv[i], "--samples") && i+1 < argc) numSamples = static_cast<uint32_t>(std::atoi(argv[++i]));
 	}
 
 	// Load HDR -- flip vertically so row 0 = bottom (OpenGL convention),
@@ -251,20 +252,22 @@ int main(int argc, char* argv[])
 	int hdrW = 0, hdrH = 0, hdrCh = 0;
 	float* hdr = stbi_loadf(hdrPath, &hdrW, &hdrH, &hdrCh, 3);
 	if (!hdr) {
-		fprintf(stderr, "ibl-bake-cpu: failed to load '%s': %s\n",
-			hdrPath, stbi_failure_reason());
+		std::cerr
+			<< "ibl-bake-cpu: failed to load '" << hdrPath << "': "
+			<< stbi_failure_reason() << std::endl;
 		return 1;
 	}
-	printf("Loaded HDR: %dx%d channels=%d\n", hdrW, hdrH, hdrCh);
+	std::cout << "Loaded HDR: " << hdrW << "x" << hdrH << " channels=" << hdrCh << std::endl;
 
 	// Compute mip chain params
 	int numMips = 0;
 	for (int s = prefilterSize; s >= 1; s >>= 1) ++numMips;
-	printf("Prefilter: %dx%d %d mips %u samples\n",
-		prefilterSize, prefilterSize, numMips, numSamples);
-#ifdef _OPENMP
-	printf("OpenMP threads: %d\n", omp_get_max_threads());
-#endif
+	std::cout
+		<< "Prefilter: " << prefilterSize << "x" << prefilterSize << " "
+		<< numMips << " mips " << numSamples << " samples" << std::endl;
+	#ifdef _OPENMP
+		std::cout << "OpenMP threads: " << omp_get_max_threads() << std::endl;
+	#endif
 
 	// Allocate float32 buffers for all mips, all faces
 	// Layout: [mip][face][pixels * 3]
@@ -276,10 +279,12 @@ int main(int argc, char* argv[])
 		float roughness = (numMips > 1) ? float(mip) / float(numMips - 1) : 0.0f;
 
 		for (int face = 0; face < 6; ++face) {
-			data[mip][face].resize((size_t)mipSize * mipSize * 3, 0.0f);
-			printf(" baking mip %d/%d face %d size=%d roughness=%.3f ...\n",
-				mip, numMips-1, face, mipSize, roughness);
-			fflush(stdout);
+			data[mip][face].resize(static_cast<size_t>(mipSize) * mipSize * 3, 0.0f);
+			std::cout
+				<< " baking mip " << mip << "/" << numMips - 1
+				<< " face " << face << " size=" << mipSize
+				<< " roughness=" << std::fixed << std::setprecision(3) << roughness
+				<< " ..." << std::defaultfloat << std::endl;
 
 			bakeFaceMip(hdr, hdrW, hdrH,
 				data[mip][face].data(), mipSize,
@@ -295,11 +300,11 @@ int main(int argc, char* argv[])
 
 	ktxTextureCreateInfo info = {};
 	info.vkFormat = VK_FORMAT_R16G16B16_SFLOAT;
-	info.baseWidth = (ktx_uint32_t)prefilterSize;
-	info.baseHeight = (ktx_uint32_t)prefilterSize;
+	info.baseWidth = static_cast<ktx_uint32_t>(prefilterSize);
+	info.baseHeight = static_cast<ktx_uint32_t>(prefilterSize);
 	info.baseDepth = 1;
 	info.numDimensions = 2;
-	info.numLevels = (ktx_uint32_t)numMips;
+	info.numLevels = static_cast<ktx_uint32_t>(numMips);
 	info.numLayers = 1;
 	info.numFaces = 6;
 	info.isArray = KTX_FALSE;
@@ -308,13 +313,15 @@ int main(int argc, char* argv[])
 	ktxTexture2* ktx = nullptr;
 	KTX_error_code rc = ktxTexture2_Create(&info, KTX_TEXTURE_CREATE_ALLOC_STORAGE, &ktx);
 	if (rc != KTX_SUCCESS) {
-		fprintf(stderr, "ibl-bake-cpu: ktxTexture2_Create failed (%d)\n", (int)rc);
+		std::cerr
+			<< "ibl-bake-cpu: ktxTexture2_Create failed (" << static_cast<int>(rc) << ")"
+			<< std::endl;
 		return 1;
 	}
 
 	for (int mip = 0; mip < numMips; ++mip) {
 		int mipSize = std::max(1, prefilterSize >> mip);
-		size_t pixelCount = (size_t)mipSize * mipSize;
+		size_t pixelCount = static_cast<size_t>(mipSize) * mipSize;
 
 		// Convert float32 -> float16 per face
 		std::vector<uint16_t> f16(pixelCount * 3);
@@ -326,25 +333,34 @@ int main(int argc, char* argv[])
 
 			size_t imageBytes = pixelCount * 3 * sizeof(uint16_t);
 			rc = ktxTexture_SetImageFromMemory(
-				(ktxTexture*)ktx, (ktx_uint32_t)mip, 0, (ktx_uint32_t)face,
-				(const ktx_uint8_t*)f16.data(), imageBytes);
+				reinterpret_cast<ktxTexture*>(ktx),
+				static_cast<ktx_uint32_t>(mip),
+				0,
+				static_cast<ktx_uint32_t>(face),
+				reinterpret_cast<const ktx_uint8_t*>(f16.data()),
+				imageBytes
+			);
+
 			if (rc != KTX_SUCCESS) {
-				fprintf(stderr, "ibl-bake-cpu: SetImage mip=%d face=%d failed (%d)\n",
-					mip, face, (int)rc);
-				ktxTexture_Destroy((ktxTexture*)ktx);
+				std::cerr
+					<< "ibl-bake-cpu: SetImage mip=" << mip << " face=" << face
+					<< " failed (" << static_cast<int>(rc) << ")" << std::endl;
+				ktxTexture_Destroy(reinterpret_cast<ktxTexture*>(ktx));
 				return 1;
 			}
 		}
 	}
 
-	rc = ktxTexture_WriteToNamedFile((ktxTexture*)ktx, outputPath);
-	ktxTexture_Destroy((ktxTexture*)ktx);
+	rc = ktxTexture_WriteToNamedFile(reinterpret_cast<ktxTexture*>(ktx), outputPath);
+	ktxTexture_Destroy(reinterpret_cast<ktxTexture*>(ktx));
 
 	if (rc != KTX_SUCCESS) {
-		fprintf(stderr, "ibl-bake-cpu: write failed (%d): %s\n", (int)rc, outputPath);
+		std::cerr
+			<< "ibl-bake-cpu: write failed (" << static_cast<int>(rc) << "): "
+			<< outputPath << std::endl;
 		return 1;
 	}
 
-	printf("Wrote %s\n", outputPath);
+	std::cout << "Wrote " << outputPath << std::endl;
 	return 0;
 }

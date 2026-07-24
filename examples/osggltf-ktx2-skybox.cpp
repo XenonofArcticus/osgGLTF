@@ -20,7 +20,8 @@
 #include <osgViewer/Viewer>
 #include <osgViewer/ViewerEventHandlers>
 
-#include <cstdio>
+#include <iomanip>
+#include <iostream>
 
 // ---------------------------------------------------------------------------
 // Shaders
@@ -123,7 +124,7 @@ static osg::Geometry* buildCrossGeometry() {
 	};
 
 	for(auto& f : faces) {
-		auto base = (unsigned)verts->size();
+		auto base = static_cast<unsigned>(verts->size());
 
 		verts->push_back({f.cx - cw, f.cy - ch, 0.0f}); // BL
 		verts->push_back({f.cx + cw, f.cy - ch, 0.0f}); // BR
@@ -158,7 +159,9 @@ class MipHandler: public osgGA::GUIEventHandler {
 	void _apply() {
 		_mipUniform->set(_mipLevel);
 
-		std::printf(" mip level: %.1f / %d\n", _mipLevel, _maxMip);
+		std::cout
+			<< " mip level: " << std::fixed << std::setprecision(1) << _mipLevel
+			<< " / " << _maxMip << std::defaultfloat << std::endl;
 	}
 
 public:
@@ -194,7 +197,7 @@ public:
 			_switch->setValue(0, !_cross);
 			_switch->setValue(1, _cross);
 
-			std::printf(" mode: %s\n", _cross ? "cross" : "skybox");
+			std::cout << " mode: " << (_cross ? "cross" : "skybox") << std::endl;
 
 			return true;
 		}
@@ -209,11 +212,10 @@ public:
 
 int main(int argc, char* argv[]) {
 	if(argc < 2) {
-		std::fprintf(stderr,
-			"Usage: ktx2-skybox <file.ktx2>\n"
-			" +/- or scroll: step through mip levels\n"
-			" c : toggle flat-cross display\n"
-		);
+		std::cerr
+			<< "Usage: ktx2-skybox <file.ktx2>" << std::endl
+			<< " +/- or scroll: step through mip levels" << std::endl
+			<< " c : toggle flat-cross display" << std::endl;
 
 		return 1;
 	}
@@ -221,7 +223,7 @@ int main(int argc, char* argv[]) {
 	auto* obj = osgDB::readObjectFile(argv[1]);
 
 	if(!obj) {
-		std::fprintf(stderr, "ktx2-skybox: failed to load '%s'\n", argv[1]);
+		std::cerr << "ktx2-skybox: failed to load '" << argv[1] << "'" << std::endl;
 
 		return 1;
 	}
@@ -229,11 +231,10 @@ int main(int argc, char* argv[]) {
 	auto* texcm = dynamic_cast<osg::TextureCubeMap*>(obj);
 
 	if(!texcm) {
-		std::fprintf(
-			stderr, "ktx2-skybox: '%s' is not a TextureCubeMap (got %s)\n",
-			argv[1],
-			obj->className()
-		);
+		std::cerr
+			<< "ktx2-skybox: '" << argv[1]
+			<< "' is not a TextureCubeMap (got " << obj->className() << ")"
+			<< std::endl;
 
 		return 1;
 	}
@@ -241,20 +242,19 @@ int main(int argc, char* argv[]) {
 	int maxMip = 0;
 
 	if(auto* img = texcm->getImage(0)) {
-		int numMips = (int)img->getNumMipmapLevels();
+		int numMips = static_cast<int>(img->getNumMipmapLevels());
 		maxMip = std::max(0, numMips - 1);
 
-		std::printf(
-			"ktx2-skybox: loaded '%s' %dx%d %d mip levels\n",
-			argv[1],
-			img->s(),
-			img->t(),
-			numMips
-		);
+		std::cout
+			<< "ktx2-skybox: loaded '" << argv[1] << "' "
+			<< img->s() << "x" << img->t() << " " << numMips << " mip levels"
+			<< std::endl;
 	}
 
 	else {
-		std::printf("ktx2-skybox: loaded '%s' (no image data on face 0)\n", argv[1]);
+		std::cout
+			<< "ktx2-skybox: loaded '" << argv[1] << "' (no image data on face 0)"
+			<< std::endl;
 	}
 
 	texcm->setUnRefImageDataAfterApply(false);
@@ -318,8 +318,10 @@ int main(int argc, char* argv[]) {
 	viewer.addEventHandler(new MipHandler(mipUniform, maxMip));
 	viewer.addEventHandler(new ModeHandler(sw));
 
-	std::printf("Controls: +/- or scroll to step mip levels (0 = sharpest, %d = roughest)\n", maxMip);
-	std::printf(" 'c' to toggle flat-cross display\n");
+	std::cout
+		<< "Controls: +/- or scroll to step mip levels (0 = sharpest, "
+		<< maxMip << " = roughest)" << std::endl
+		<< " 'c' to toggle flat-cross display" << std::endl;
 
 	return viewer.run();
 }

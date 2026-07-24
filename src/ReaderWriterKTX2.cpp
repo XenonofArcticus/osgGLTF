@@ -137,13 +137,13 @@ static osg::ref_ptr<osg::Image> buildFaceImage(
 	const GLFormat& fmt
 ) {
 	const uint32_t numLevels = ktx->numLevels;
-	const uint8_t* src = ktxTexture_GetData((ktxTexture*)ktx);
+	const uint8_t* src = ktxTexture_GetData(reinterpret_cast<ktxTexture*>(ktx));
 
 	// Total buffer: sum of this face's footprint across all mip levels
 	size_t totalSize = 0;
 
 	for(uint32_t mip = 0; mip < numLevels; ++mip) {
-		totalSize += ktxTexture_GetImageSize((ktxTexture*)ktx, mip);
+		totalSize += ktxTexture_GetImageSize(reinterpret_cast<ktxTexture*>(ktx), mip);
 	}
 
 	unsigned char* buf = new unsigned char[totalSize];
@@ -153,9 +153,9 @@ static osg::ref_ptr<osg::Image> buildFaceImage(
 	for(uint32_t mip = 0; mip < numLevels; ++mip) {
 		ktx_size_t srcOff = 0;
 
-		ktxTexture_GetImageOffset((ktxTexture*)ktx, mip, 0, face, &srcOff);
+		ktxTexture_GetImageOffset(reinterpret_cast<ktxTexture*>(ktx), mip, 0, face, &srcOff);
 
-		size_t mipSize = ktxTexture_GetImageSize((ktxTexture*)ktx, mip);
+		size_t mipSize = ktxTexture_GetImageSize(reinterpret_cast<ktxTexture*>(ktx), mip);
 
 		memcpy(buf + dstOff, src + srcOff, mipSize);
 
@@ -208,7 +208,10 @@ class ReaderWriterKTX2: public osgDB::ReaderWriter {
 			return ReadResult::ERROR_IN_READING_FILE;
 		}
 
-		struct Guard { ktxTexture2* p; ~Guard() { ktxTexture_Destroy((ktxTexture*)p); } } g{ktx};
+		struct Guard {
+			ktxTexture2* p;
+			~Guard() { ktxTexture_Destroy(reinterpret_cast<ktxTexture*>(p)); }
+		} g{ktx};
 
 		// Transcode Basis Universal (ETC1S / UASTC) to RGBA8.
 		// Note: HDR cubemaps should never be Basis-encoded; this is a safety net.
@@ -308,13 +311,13 @@ class ReaderWriterKTX2: public osgDB::ReaderWriter {
 			return WriteResult::ERROR_IN_WRITING_FILE;
 		}
 
-		uint32_t numMips = std::max(1u, (uint32_t)face0->getNumMipmapLevels());
+		uint32_t numMips = std::max(1u, static_cast<uint32_t>(face0->getNumMipmapLevels()));
 
 		ktxTextureCreateInfo ci = {};
 
 		ci.vkFormat = vkFmt;
-		ci.baseWidth = (uint32_t)face0->s();
-		ci.baseHeight = (uint32_t)face0->t();
+		ci.baseWidth = static_cast<uint32_t>(face0->s());
+		ci.baseHeight = static_cast<uint32_t>(face0->t());
 		ci.baseDepth = 1;
 		ci.numDimensions = 2;
 		ci.numLevels = numMips;
@@ -332,7 +335,10 @@ class ReaderWriterKTX2: public osgDB::ReaderWriter {
 			return WriteResult::ERROR_IN_WRITING_FILE;
 		}
 
-		struct Guard { ktxTexture2* p; ~Guard() { ktxTexture_Destroy((ktxTexture*)p); } } g{ktx};
+		struct Guard {
+			ktxTexture2* p;
+			~Guard() { ktxTexture_Destroy(reinterpret_cast<ktxTexture*>(p)); }
+		} g{ktx};
 
 		for(uint32_t face = 0; face < 6; ++face) {
 			const osg::Image* img = texcm->getImage(face);
@@ -347,10 +353,10 @@ class ReaderWriterKTX2: public osgDB::ReaderWriter {
 			}
 
 			for(uint32_t mip = 0; mip < numMips; ++mip) {
-				ktx_size_t mipBytes = ktxTexture_GetImageSize((ktxTexture*)ktx, mip);
+				ktx_size_t mipBytes = ktxTexture_GetImageSize(reinterpret_cast<ktxTexture*>(ktx), mip);
 
 				rc = ktxTexture_SetImageFromMemory(
-					(ktxTexture*)ktx,
+					reinterpret_cast<ktxTexture*>(ktx),
 					mip,
 					0,
 					face,
@@ -369,7 +375,7 @@ class ReaderWriterKTX2: public osgDB::ReaderWriter {
 			}
 		}
 
-		rc = ktxTexture_WriteToNamedFile((ktxTexture*)ktx, file.c_str());
+		rc = ktxTexture_WriteToNamedFile(reinterpret_cast<ktxTexture*>(ktx), file.c_str());
 
 		if(rc != KTX_SUCCESS) {
 			OSG_WARN << "ReaderWriterKTX2: WriteToNamedFile: " << ktxErrorString(rc) << std::endl;
@@ -400,13 +406,13 @@ class ReaderWriterKTX2: public osgDB::ReaderWriter {
 			return WriteResult::ERROR_IN_WRITING_FILE;
 		}
 
-		uint32_t numMips = std::max(1u, (uint32_t)img->getNumMipmapLevels());
+		uint32_t numMips = std::max(1u, static_cast<uint32_t>(img->getNumMipmapLevels()));
 
 		ktxTextureCreateInfo ci = {};
 
 		ci.vkFormat = vkFmt;
-		ci.baseWidth = (uint32_t)img->s();
-		ci.baseHeight = (uint32_t)img->t();
+		ci.baseWidth = static_cast<uint32_t>(img->s());
+		ci.baseHeight = static_cast<uint32_t>(img->t());
 		ci.baseDepth = 1;
 		ci.numDimensions = 2;
 		ci.numLevels = numMips;
@@ -424,12 +430,15 @@ class ReaderWriterKTX2: public osgDB::ReaderWriter {
 			return WriteResult::ERROR_IN_WRITING_FILE;
 		}
 
-		struct Guard { ktxTexture2* p; ~Guard() { ktxTexture_Destroy((ktxTexture*)p); } } g{ktx};
+		struct Guard {
+			ktxTexture2* p;
+			~Guard() { ktxTexture_Destroy(reinterpret_cast<ktxTexture*>(p)); }
+		} g{ktx};
 
 		for(uint32_t mip = 0; mip < numMips; ++mip) {
-			ktx_size_t mipBytes = ktxTexture_GetImageSize((ktxTexture*)ktx, mip);
+			ktx_size_t mipBytes = ktxTexture_GetImageSize(reinterpret_cast<ktxTexture*>(ktx), mip);
 			rc = ktxTexture_SetImageFromMemory(
-				(ktxTexture*)ktx,
+				reinterpret_cast<ktxTexture*>(ktx),
 				mip,
 				0,
 				0,
@@ -447,7 +456,7 @@ class ReaderWriterKTX2: public osgDB::ReaderWriter {
 			}
 		}
 
-		rc = ktxTexture_WriteToNamedFile((ktxTexture*)ktx, file.c_str());
+		rc = ktxTexture_WriteToNamedFile(reinterpret_cast<ktxTexture*>(ktx), file.c_str());
 
 		if(rc != KTX_SUCCESS) {
 			OSG_WARN << "ReaderWriterKTX2: WriteToNamedFile: " << ktxErrorString(rc) << std::endl;
