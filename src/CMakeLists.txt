@@ -18,18 +18,20 @@ set_target_properties(osgGLTF PROPERTIES
 	CXX_STANDARD_REQUIRED ON
 )
 
-install(TARGETS osgGLTF
-	ARCHIVE DESTINATION ${CMAKE_INSTALL_PREFIX}/lib64
-	LIBRARY DESTINATION ${CMAKE_INSTALL_PREFIX}/lib64
-	RUNTIME DESTINATION ${CMAKE_INSTALL_PREFIX}/bin
-)
+if(OSGGLTF_INSTALL)
+	install(TARGETS osgGLTF
+		ARCHIVE DESTINATION ${CMAKE_INSTALL_PREFIX}/lib64
+		LIBRARY DESTINATION ${CMAKE_INSTALL_PREFIX}/lib64
+		RUNTIME DESTINATION ${CMAKE_INSTALL_PREFIX}/bin
+	)
 
-install(FILES
-	osgGLTF/IBLBaker.hpp
-	osgGLTF/Shader.hpp
-	osgGLTF/SimplePlayer.hpp
-	DESTINATION ${CMAKE_INSTALL_PREFIX}/include/osgGLTF
-)
+	install(FILES
+		osgGLTF/IBLBaker.hpp
+		osgGLTF/Shader.hpp
+		osgGLTF/SimplePlayer.hpp
+		DESTINATION ${CMAKE_INSTALL_PREFIX}/include/osgGLTF
+	)
+endif()
 
 add_library(osgdb_gltf MODULE
 	ReaderWriterGLTF.cpp
@@ -37,7 +39,7 @@ add_library(osgdb_gltf MODULE
 
 target_include_directories(osgdb_gltf PRIVATE
 	${CMAKE_CURRENT_SOURCE_DIR}
-	${CMAKE_SOURCE_DIR}/ext/tinygltf
+	${PROJECT_SOURCE_DIR}/ext/tinygltf
 	${OPENSCENEGRAPH_INCLUDE_DIRS}
 )
 
@@ -60,91 +62,103 @@ set_target_properties(osgdb_gltf PROPERTIES
 	PREFIX "" # OSG plugin loader expects no "lib" prefix
 )
 
-install(TARGETS osgdb_gltf
-	DESTINATION ${CMAKE_INSTALL_PREFIX}/lib64/osgPlugins-${OPENSCENEGRAPH_VERSION}
-)
+if(OSGGLTF_INSTALL)
+	install(TARGETS osgdb_gltf
+		DESTINATION ${CMAKE_INSTALL_PREFIX}/lib64/osgPlugins-${OPENSCENEGRAPH_VERSION}
+	)
+endif()
 
 # ---------------------------------------------------------------------------
 # KTX2 plugin - requires ext/KTX-Software submodule
 # ---------------------------------------------------------------------------
 
-add_library(osgdb_ktx2 MODULE
-	ReaderWriterKTX2.cpp
-)
+if(OSGGLTF_BUILD_KTX2)
+	add_library(osgdb_ktx2 MODULE
+		ReaderWriterKTX2.cpp
+	)
 
-target_include_directories(osgdb_ktx2 PRIVATE
-	${CMAKE_CURRENT_SOURCE_DIR}
-	${OPENSCENEGRAPH_INCLUDE_DIRS}
-)
+	target_include_directories(osgdb_ktx2 PRIVATE
+		${CMAKE_CURRENT_SOURCE_DIR}
+		${OPENSCENEGRAPH_INCLUDE_DIRS}
+	)
 
-target_link_libraries(osgdb_ktx2 PRIVATE
-	ktx
-	${OPENSCENEGRAPH_LIBRARIES}
-)
+	target_link_libraries(osgdb_ktx2 PRIVATE
+		ktx
+		${OPENSCENEGRAPH_LIBRARIES}
+	)
 
-set_target_properties(osgdb_ktx2 PROPERTIES
-	CXX_STANDARD 20
-	CXX_STANDARD_REQUIRED ON
-	PREFIX ""
-)
+	set_target_properties(osgdb_ktx2 PROPERTIES
+		CXX_STANDARD 20
+		CXX_STANDARD_REQUIRED ON
+		PREFIX ""
+	)
 
-install(TARGETS osgdb_ktx2
-	DESTINATION ${CMAKE_INSTALL_PREFIX}/lib64/osgPlugins-${OPENSCENEGRAPH_VERSION}
-)
+	if(OSGGLTF_INSTALL)
+		install(TARGETS osgdb_ktx2
+			DESTINATION ${CMAKE_INSTALL_PREFIX}/lib64/osgPlugins-${OPENSCENEGRAPH_VERSION}
+		)
+	endif()
+endif()
 
 # ---------------------------------------------------------------------------
 # osggltf-iblbake-gpu - GPU IBL baker: HDR equirect -> GGX-prefiltered KTX2 cubemap
 # ---------------------------------------------------------------------------
 
-add_executable(osggltf-iblbake-gpu osggltf-iblbake-gpu.cpp)
+if(OSGGLTF_BUILD_TOOLS)
+	add_executable(osggltf-iblbake-gpu osggltf-iblbake-gpu.cpp)
 
-target_include_directories(osggltf-iblbake-gpu PRIVATE
-	${CMAKE_CURRENT_SOURCE_DIR}
-	${OPENSCENEGRAPH_INCLUDE_DIRS}
-)
+	target_include_directories(osggltf-iblbake-gpu PRIVATE
+		${CMAKE_CURRENT_SOURCE_DIR}
+		${OPENSCENEGRAPH_INCLUDE_DIRS}
+	)
 
-target_link_libraries(osggltf-iblbake-gpu PRIVATE
-	osgGLTF
-)
+	target_link_libraries(osggltf-iblbake-gpu PRIVATE
+		osgGLTF
+	)
 
-set_target_properties(osggltf-iblbake-gpu PROPERTIES
-	CXX_STANDARD 20
-	CXX_STANDARD_REQUIRED ON
-)
+	set_target_properties(osggltf-iblbake-gpu PROPERTIES
+		CXX_STANDARD 20
+		CXX_STANDARD_REQUIRED ON
+	)
 
-install(TARGETS osggltf-iblbake-gpu
-	DESTINATION ${CMAKE_INSTALL_PREFIX}/bin
-)
+	if(OSGGLTF_INSTALL)
+		install(TARGETS osggltf-iblbake-gpu
+			DESTINATION ${CMAKE_INSTALL_PREFIX}/bin
+		)
+	endif()
 
 # ---------------------------------------------------------------------------
 # osggltf-iblbake-cpu - CPU-only IBL baker (no OpenGL, no OSG). Uses stb_image + libktx.
 # ---------------------------------------------------------------------------
 
-find_package(OpenMP)
+	find_package(OpenMP)
 
-add_executable(osggltf-iblbake-cpu osggltf-iblbake-cpu.cpp)
+	add_executable(osggltf-iblbake-cpu osggltf-iblbake-cpu.cpp)
 
-target_include_directories(osggltf-iblbake-cpu PRIVATE
-	${CMAKE_SOURCE_DIR}/ext/tinygltf # stb_image.h
-	${CMAKE_SOURCE_DIR}/ext/KTX-Software/lib/include
-)
-
-target_link_libraries(osggltf-iblbake-cpu PRIVATE ktx)
-
-if(OpenMP_CXX_FOUND)
-	target_link_libraries(osggltf-iblbake-cpu PRIVATE OpenMP::OpenMP_CXX)
-endif()
-
-set_target_properties(osggltf-iblbake-cpu PROPERTIES
-	CXX_STANDARD 20
-	CXX_STANDARD_REQUIRED ON
-)
-
-install(TARGETS osggltf-iblbake-cpu DESTINATION ${CMAKE_INSTALL_PREFIX}/bin)
-
-if(OSG_PYTHON_DIR)
-	install(PROGRAMS osggltf.py
-		DESTINATION ${CMAKE_INSTALL_PREFIX}/bin
-		RENAME osggltf
+	target_include_directories(osggltf-iblbake-cpu PRIVATE
+		${PROJECT_SOURCE_DIR}/ext/tinygltf # stb_image.h
+		${PROJECT_SOURCE_DIR}/ext/KTX-Software/lib/include
 	)
+
+	target_link_libraries(osggltf-iblbake-cpu PRIVATE ktx)
+
+	if(OpenMP_CXX_FOUND)
+		target_link_libraries(osggltf-iblbake-cpu PRIVATE OpenMP::OpenMP_CXX)
+	endif()
+
+	set_target_properties(osggltf-iblbake-cpu PROPERTIES
+		CXX_STANDARD 20
+		CXX_STANDARD_REQUIRED ON
+	)
+
+	if(OSGGLTF_INSTALL)
+		install(TARGETS osggltf-iblbake-cpu DESTINATION ${CMAKE_INSTALL_PREFIX}/bin)
+	endif()
+
+	if(OSGGLTF_INSTALL AND OSGGLTF_BUILD_PYTHON)
+		install(PROGRAMS osggltf.py
+			DESTINATION ${CMAKE_INSTALL_PREFIX}/bin
+			RENAME osggltf
+		)
+	endif()
 endif()

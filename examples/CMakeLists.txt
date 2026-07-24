@@ -15,4 +15,6 @@ set_target_properties(osggltf-ktx2-skybox PROPERTIES
     CXX_STANDARD_REQUIRED ON
 )
 
-install(TARGETS osggltf-ktx2-skybox DESTINATION ${CMAKE_INSTALL_PREFIX}/bin)
+if(OSGGLTF_INSTALL)
+	install(TARGETS osggltf-ktx2-skybox DESTINATION ${CMAKE_INSTALL_PREFIX}/bin)
+endif()

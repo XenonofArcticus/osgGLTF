@@ -22,6 +22,28 @@ Mapping](https://www.pelicanmapping.com/) for doing 95% of the work!
 Be sure and call `osgDB::Registry::instance()->addFileExtensionAlias("glb", "gltf");`
 if you want to support GLB loading easily!
 
+## CMake
+
+A top-level build enables the KTX2 plugin, tools, examples, and installation rules by default.
+Each optional layer can be controlled independently:
+
+- `OSGGLTF_BUILD_KTX2` builds the KTX2 osgDB plugin.
+- `OSGGLTF_BUILD_TOOLS` builds the CPU and GPU IBL-baking tools.
+- `OSGGLTF_BUILD_EXAMPLES` builds the examples.
+- `OSGGLTF_BUILD_PYTHON` builds the Python module.
+- `OSGGLTF_INSTALL` generates osgGLTF installation rules.
+
+Python support also requires the location of an OpenSceneGraph.py checkout:
+
+```console
+cmake -S . -B BUILD \
+	-DOSGGLTF_BUILD_PYTHON=ON \
+	-DOSG_PYTHON_DIR=/path/to/OpenSceneGraph.py
+```
+
+When osgGLTF is embedded with `add_subdirectory()`, the optional layers and installation rules are
+disabled by default. The glTF plugin itself remains available to the parent project.
+
 ## Shader Interface
 
 osgGLTF loads geometry and materials without imposing a particular renderer. The public
