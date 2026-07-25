@@ -33,6 +33,17 @@ Each optional layer can be controlled independently:
 - `OSGGLTF_BUILD_PYTHON` builds the Python module.
 - `OSGGLTF_INSTALL` generates osgGLTF installation rules.
 
+The default top-level build enables `OSGGLTF_BUILD_TOOLS`, whose GPU prefilter tool links
+`osgx::osgx`. For a fresh full build, configure, build, and install osgdebug first, then make its
+installation visible while configuring osgGLTF:
+
+```console
+cmake -S . -B BUILD -DCMAKE_PREFIX_PATH=/path/to/osgdebug/prefix
+```
+
+The glTF loader itself does not currently depend on osgx. A loader-only build may therefore be
+built before osgdebug by configuring with `-DOSGGLTF_BUILD_TOOLS=OFF`.
+
 Python support also requires the location of an OpenSceneGraph.py checkout:
 
 ```console
@@ -72,32 +83,41 @@ used when an application needs different program or StateSet ownership.
 
 The Python bindings expose the same constants, GLSL source, and helpers under `osgGLTF.shader`.
 
-## IBL Baking
+## GPU GGX Prefiltering
 
-The GPU IBL baker is available as both a command-line tool and a small C++ API.
+The GPU prefilter command-line tool remains packaged with osgGLTF for now, while its generic
+implementation and Python bindings live in osgx:
 
 ```bash
 osggltf-iblbake-gpu input.hdr output.ktx2 --prefilter-size 128
 ```
 
-Applications can link `osgGLTF` and use:
+Applications can consume the same frame-driven scene/readback API through the compiled
+`osgx::osgx` target:
 
 ```cpp
-#include <osgGLTF/IBLBaker.hpp>
+#include <osgx/GGXPrefilter.hpp>
 
-osgGLTF::IBLBakeOptions options;
+osgx::ibl::GGXPrefilterOptions options;
 options.prefilterSize = 128;
 
-auto specularEnv = osgGLTF::bakeSpecularIBL("input.hdr", options);
+auto scene = osgx::ibl::createGGXPrefilterScene(equirectImage, options);
 ```
 
-The API returns an `osg::TextureCubeMap` with a full GGX-prefiltered mip chain.
-Use `bakeSpecularIBLToKTX2()` when you want the library to write the KTX2 file directly.
+Attach `scene.root` and `scene.readback` to the caller-owned viewer as described in
+`GGXPrefilter.hpp`, render until readback completes, then call
+`osgx::ibl::finishGGXPrefilter()`. The result is an `osg::TextureCubeMap` containing the full
+GGX-prefiltered mip chain.
 
-Python bindings for `bakeSpecularIBL` are planned via
-[OpenSceneGraph.py](https://github.com/cubicool/OpenSceneGraph.py), which will allow
-calling the bake pipeline from Python with a single line and receiving a
-`TextureCubeMap` that drops directly into an OSG scene graph.
+For CMake package consumption:
+
+```cmake
+find_package(osgx CONFIG REQUIRED)
+target_link_libraries(my_target PRIVATE osgx::osgx)
+```
+
+Python exposes the same API under `osgx.ibl`, including `GGXPrefilterOptions`,
+`createGGXPrefilterScene()`, `rebakeGGXPrefilterScene()`, and `finishGGXPrefilter()`.
 
 Future work: a dynamic reflection-probe API similar in spirit to Unreal Engine's
 Reflection Capture Actors and Unity's Reflection Probes. The current baker is

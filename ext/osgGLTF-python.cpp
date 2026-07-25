@@ -5,7 +5,6 @@
 #define STB_IMAGE_WRITE_IMPLEMENTATION
 #define TINYGLTF_NOEXCEPTION
 
-#include "osgGLTF/IBLBaker.hpp"
 #include "osgGLTF/Shader.hpp"
 #include "osgGLTF/SimplePlayer.hpp"
 
@@ -724,40 +723,6 @@ PYBIND11_MODULE(osgGLTF, m) {
 		)
 		.def("togglePlaying", &osgGLTF::SimplePlayer::togglePlaying)
 		.def("restart", &osgGLTF::SimplePlayer::restart)
-	;
-
-	py::class_<osgGLTF::IBLBakeOptions>(m, "IBLBakeOptions")
-		.def(py::init<>())
-		.def_readwrite("prefilterSize", &osgGLTF::IBLBakeOptions::prefilterSize)
-		.def_readwrite("maxFrames", &osgGLTF::IBLBakeOptions::maxFrames)
-		.def_readwrite("readbackFrame", &osgGLTF::IBLBakeOptions::readbackFrame)
-		.def_readwrite("syncReadback", &osgGLTF::IBLBakeOptions::syncReadback)
-	;
-
-	py::class_<
-		osgGLTF::IBLReadback,
-		osg::Camera::DrawCallback,
-		osg::ref_ptr<osgGLTF::IBLReadback>
-	>(m, "IBLReadback")
-		.def("isDone", &osgGLTF::IBLReadback::isDone)
-		.def("getResult", &osgGLTF::IBLReadback::getResult)
-		.def("reset", &osgGLTF::IBLReadback::reset)
-	;
-
-	py::class_<osgGLTF::IBLBakeScene>(m, "IBLBakeScene")
-		.def_readonly("root", &osgGLTF::IBLBakeScene::root)
-		.def_readonly("readback", &osgGLTF::IBLBakeScene::readback)
-	;
-
-	m
-		.def(
-			"createIBLBakeScene",
-			&osgGLTF::createIBLBakeScene,
-			"equirectImage"_a,
-			"options"_a=osgGLTF::IBLBakeOptions()
-		)
-		.def("rebakeIBLBakeScene", &osgGLTF::rebakeIBLBakeScene, "scene"_a, "equirectImage"_a)
-		.def("finishIBLBake", &osgGLTF::finishIBLBake, "readback"_a)
 	;
 
 	m

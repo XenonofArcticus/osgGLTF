@@ -68,6 +68,10 @@ if(OSGGLTF_BUILD_KTX2 OR OSGGLTF_BUILD_TOOLS)
 	add_subdirectory("ext/KTX-Software")
 endif()
 
+if(OSGGLTF_BUILD_TOOLS)
+	find_package(osgx CONFIG REQUIRED)
+endif()
+
 add_subdirectory("src")
 
 if(OSGGLTF_BUILD_EXAMPLES)
@@ -92,9 +96,14 @@ if(OSGGLTF_BUILD_PYTHON)
 	target_include_directories(osgGLTF_python PRIVATE
 		"${OSG_PYTHON_DIR}"
 		"${OSG_PYTHON_DIR}/etc"
+		"${PROJECT_SOURCE_DIR}/src"
 		"${PROJECT_SOURCE_DIR}/ext/tinygltf"
+		${OPENSCENEGRAPH_INCLUDE_DIRS}
 	)
-	target_link_libraries(osgGLTF_python PRIVATE osgGLTF pybind11::module)
+	target_link_libraries(osgGLTF_python PRIVATE
+		pybind11::module
+		${OPENSCENEGRAPH_LIBRARIES}
+	)
 	target_compile_features(osgGLTF_python PUBLIC cxx_std_20)
 	# target_compile_options(osgGLTF_python PRIVATE ${SLUGHORN_COMPILE_OPTIONS})
 	set_target_properties(osgGLTF_python PROPERTIES POSITION_INDEPENDENT_CODE ON)

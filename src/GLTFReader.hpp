@@ -1443,7 +1443,7 @@ public:
 
 			// Export the material as a single osgGLTF_Material UBO for downstream PBR shaders
 			// (e.g. pyosg-lighting/09-ibl.py) instead of one osg::Uniform per field - this is
-			// this plugin's own extension to the material contract, not part of OSG's osg_*
+			// this plugin's own extension to the material interface, not part of OSG's osg_*
 			// built-in uniform set, so it's namespaced (block name + binding) to avoid colliding
 			// with an unrelated shader's own material uniforms.
 			//
