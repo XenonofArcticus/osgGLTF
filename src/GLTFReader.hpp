@@ -13,10 +13,6 @@
 
 #pragma once
 
-#include <osg/Node>
-#include <osg/MatrixTransform>
-#include <osg/CullFace>
-
 #include <osgDB/FileNameUtils>
 #include <osgDB/Options>
 #include <osgDB/ReaderWriter>
@@ -25,16 +21,11 @@
 
 #include <cstddef>
 #include <string>
-#include <vector>
 
 // tiny_gltf.h is intentionally NOT included here - see file comment above.
 
-#include "Accessor.hpp"
-#include "Animation.hpp"
 #include "Log.hpp"
-#include "Material.hpp"
-#include "Mesh.hpp"
-#include "Skin.hpp"
+#include "Scene.hpp"
 #include "Texture.hpp"
 
 class GLTFReader {
@@ -43,15 +34,6 @@ public:
 	using ProgressCallback = osgGLTF::Reader::ProgressCallback;
 
 	using TextureCache = osgGLTF::detail::TextureCache;
-
-	struct Env {
-		Env(const std::string& loc, const osgDB::Options* opt):
-		_referrer(loc),
-		_readOptions(opt) {}
-
-		std::string _referrer;
-		const osgDB::Options* _readOptions;
-	};
 
 	mutable TextureCache* _texCache = nullptr;
 
@@ -183,7 +165,7 @@ public:
 		loader.SetImageLoader(&_realImageLoader, &imageLoadContext);
 
 		// tinygltf's own file/buffer decode is one opaque blocking call, but image decode
-	// (the real bottleneck for texture-heavy assets) is now hooked via _realImageLoader
+		// (the real bottleneck for texture-heavy assets) is now hooked via _realImageLoader
 		// above, so LoadingTextures progress ticks in real time as each image finishes.
 		bool ok = isBinary
 			? loader.LoadBinaryFromFile(&model, &err, &warn, location)
@@ -208,9 +190,13 @@ public:
 
 		logAnimationBits(model);
 
-		Env env(location, readOptions);
-
-		return makeNodeFromModel(model, env, progress);
+		return osgGLTF::detail::buildScene(
+			model,
+			location,
+			readOptions,
+			_texCache,
+			progress
+		);
 	}
 
 	void logAnimationBits(const tinygltf::Model& model) const {
@@ -287,169 +273,4 @@ public:
 		}
 	}
 
-	osg::Node* makeNodeFromModel(
-		const tinygltf::Model& model,
-		const Env& env,
-		const ProgressCallback& progress=nullptr
-	) const {
-		NodeBuilder builder(this, model, env, progress);
-
-		// glTF is Y-up; rotate to Z-up unless caller passes "gltfZUp"
-		bool zUp =
-			env._readOptions &&
-			env._readOptions->getOptionString().find("gltfZUp") != std::string::npos
-		;
-
-		osg::MatrixTransform* root = new osg::MatrixTransform();
-
-		if(!zUp) root->setMatrix(osg::Matrixd::rotate(
-			osg::Vec3d(0, 1, 0),
-			osg::Vec3d(0, 0, 1)
-		));
-
-		for(auto& scene : model.scenes) {
-			for(int idx : scene.nodes) {
-				if(osg::Node* n = builder.createNode(idx)) root->addChild(n);
-			}
-		}
-
-		builder.resolveSkinJointNodes();
-		builder.installAnimationCallback(root);
-		builder.installSkinPaletteCallbacks();
-
-		root->getOrCreateStateSet()->setAttributeAndModes(
-			new osg::CullFace(osg::CullFace::BACK),
-			osg::StateAttribute::ON
-		);
-
-		return root;
-	}
-
-	struct NodeBuilder {
-		const tinygltf::Model& _model;
-		const Env& _env;
-		osgGLTF::detail::TextureLoader _textureLoader;
-		osgGLTF::detail::MaterialBuilder _materialBuilder;
-		ProgressCallback _progress;
-		std::vector<osg::ref_ptr<osg::Array>> _arrays;
-		std::vector<osg::ref_ptr<osgGLTF::detail::Skin>> _skins;
-		osgGLTF::detail::MeshBuilder _meshBuilder;
-		mutable std::vector<osg::observer_ptr<osg::MatrixTransform>> _nodeTransforms;
-		mutable size_t _nodesBuilt = 0;
-
-		NodeBuilder(
-			const GLTFReader* r,
-			const tinygltf::Model& m,
-			const Env& e,
-			const ProgressCallback& p=nullptr
-		):
-		_model(m),
-		_env(e),
-		_textureLoader(m, e._referrer, e._readOptions, r->_texCache),
-		_materialBuilder(m, e._referrer, e._readOptions, _textureLoader),
-		_progress(p),
-		_meshBuilder(m, e._readOptions, _materialBuilder, _arrays, _skins) {
-			_nodeTransforms.resize(m.nodes.size());
-
-			_arrays = osgGLTF::detail::extractArrays(_model);
-
-			_skins = osgGLTF::detail::prepareSkins(_model, _arrays);
-		}
-
-		osg::Node* createNode(int nodeIdx, unsigned depth = 0) const {
-			if(nodeIdx < 0 || nodeIdx >= static_cast<int>(_model.nodes.size())) return nullptr;
-
-			const tinygltf::Node& node = _model.nodes[nodeIdx];
-
-			GLTF_NOTIFY(depth)
-				<< "createNode '" << node.name << "'"
-				<< " node=" << nodeIdx
-				<< " mesh=" << node.mesh
-				<< " skin=" << node.skin
-				<< " children=" << node.children.size() << std::endl
-			;
-
-			// One tick per node regardless of depth - model.nodes.size() covers every
-			// node in the file, not just ones reachable from the active scene, so this
-			// is an upper-bound denominator (progress may not hit exactly 100% for a
-			// model with unreferenced nodes, which is rare and harmless for a bar).
-			_nodesBuilt++;
-
-			if(_progress) _progress(Stage::BuildingNodes, _nodesBuilt, _model.nodes.size());
-
-			osg::MatrixTransform* mt = new osg::MatrixTransform();
-
-			if(node.matrix.size() == 16) mt->setMatrix(osg::Matrixd(node.matrix.data()));
-
-			if(mt->getMatrix().isIdentity()) {
-				osg::Matrixd S, R, T;
-
-				if(node.scale.size() == 3) S = osg::Matrixd::scale(
-					node.scale[0],
-					node.scale[1],
-					node.scale[2]
-				);
-
-				if(node.rotation.size() == 4) R.makeRotate(osg::Quat(
-					node.rotation[0],
-					node.rotation[1],
-					node.rotation[2],
-					node.rotation[3]
-				));
-
-				if(node.translation.size() == 3) T = osg::Matrixd::translate(
-					node.translation[0],
-					node.translation[1],
-					node.translation[2]
-				);
-
-				mt->setMatrix(S * R * T);
-			}
-
-			_nodeTransforms[nodeIdx] = mt;
-
-			if(
-				node.skin >= 0 &&
-				node.skin < static_cast<int>(_skins.size()) &&
-				_skins[node.skin].valid()
-			) _skins[node.skin]->skinnedNodes.push_back(mt);
-
-			if(node.mesh >= 0) mt->addChild(_meshBuilder.makeMesh(
-				_model.meshes[node.mesh],
-				node.skin
-			));
-
-			for(int childIdx : node.children) {
-				if(osg::Node* c = createNode(childIdx, depth + 1)) mt->addChild(c);
-			}
-
-			mt->setName(node.name);
-
-			return mt;
-		}
-
-		void resolveSkinJointNodes() {
-			osgGLTF::detail::resolveSkinJointNodes(_model, _nodeTransforms, _skins);
-		}
-
-		void installSkinPaletteCallbacks() {
-			osgGLTF::detail::installSkinPaletteCallbacks(_skins);
-		}
-
-		void installAnimationCallback(osg::Node* root) const {
-			const bool skipAnimation =
-				_env._readOptions &&
-				_env._readOptions->getOptionString().find("gltfSkipAnimation") != std::string::npos
-			;
-
-			osgGLTF::detail::installAnimationCallback(
-				_model,
-				_arrays,
-				_nodeTransforms,
-				root,
-				skipAnimation
-			);
-		}
-
-	};
 };
