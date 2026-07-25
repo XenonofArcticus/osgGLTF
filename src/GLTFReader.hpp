@@ -14,25 +14,17 @@
 #pragma once
 
 #include <osg/Node>
-#include <osg/Geometry>
 #include <osg/MatrixTransform>
 #include <osg/CullFace>
-
-#include <osgUtil/SmoothingVisitor>
 
 #include <osgDB/FileNameUtils>
 #include <osgDB/Options>
 #include <osgDB/ReaderWriter>
 
-#include <osgGLTF/Shader.hpp>
 #include <osgGLTF/Reader.hpp>
 
-#include <algorithm>
 #include <cstddef>
-#include <cstdlib>
-#include <map>
 #include <string>
-#include <typeinfo>
 #include <vector>
 
 // tiny_gltf.h is intentionally NOT included here - see file comment above.
@@ -41,6 +33,7 @@
 #include "Animation.hpp"
 #include "Log.hpp"
 #include "Material.hpp"
+#include "Mesh.hpp"
 #include "Skin.hpp"
 #include "Texture.hpp"
 
@@ -340,6 +333,7 @@ public:
 		ProgressCallback _progress;
 		std::vector<osg::ref_ptr<osg::Array>> _arrays;
 		std::vector<osg::ref_ptr<osgGLTF::detail::Skin>> _skins;
+		osgGLTF::detail::MeshBuilder _meshBuilder;
 		mutable std::vector<osg::observer_ptr<osg::MatrixTransform>> _nodeTransforms;
 		mutable size_t _nodesBuilt = 0;
 
@@ -353,7 +347,8 @@ public:
 		_env(e),
 		_textureLoader(m, e._referrer, e._readOptions, r->_texCache),
 		_materialBuilder(m, e._referrer, e._readOptions, _textureLoader),
-		_progress(p) {
+		_progress(p),
+		_meshBuilder(m, e._readOptions, _materialBuilder, _arrays, _skins) {
 			_nodeTransforms.resize(m.nodes.size());
 
 			_arrays = osgGLTF::detail::extractArrays(_model);
@@ -419,7 +414,10 @@ public:
 				_skins[node.skin].valid()
 			) _skins[node.skin]->skinnedNodes.push_back(mt);
 
-			if(node.mesh >= 0) mt->addChild(makeMesh(_model.meshes[node.mesh], node.skin));
+			if(node.mesh >= 0) mt->addChild(_meshBuilder.makeMesh(
+				_model.meshes[node.mesh],
+				node.skin
+			));
 
 			for(int childIdx : node.children) {
 				if(osg::Node* c = createNode(childIdx, depth + 1)) mt->addChild(c);
@@ -451,243 +449,6 @@ public:
 				root,
 				skipAnimation
 			);
-		}
-
-		osg::Group* makeMesh(const tinygltf::Mesh& mesh, int skinIdx) const {
-			GLTF_NOTIFY(1)
-				<< "makeMesh '" << mesh.name
-				<< "' skin=" << skinIdx
-				<< " - " << mesh.primitives.size() << " primitive(s)" << std::endl
-			;
-
-			osg::Group* group = new osg::Group();
-
-			group->setName(mesh.name);
-
-			int primIdx = 0;
-
-			for(auto& primitive : mesh.primitives) {
-				GLTF_NOTIFY(2)
-					<< "primitive[" << primIdx << "]"
-					<< " mode=" << primitive.mode
-					<< " indices=" << primitive.indices
-					<< " material=" << primitive.material
-					<< " attrs=" << primitive.attributes.size() << std::endl
-				;
-
-				osg::ref_ptr<osg::Geometry> geom = new osg::Geometry();
-
-				geom->setName(typeid(*this).name());
-				geom->setUseVertexBufferObjects(true);
-
-				osg::Vec4 baseColorFactor(1, 1, 1, 1);
-
-				// vertex attributes - parsed before material application since
-				// texture-unit binding needs to know which UV set (TEXCOORD_n)
-				// each texture actually asks for.
-				GLTF_NOTIFY(3) << "attributes:" << std::endl;
-
-				std::map<int, osg::Array*> texCoordSets;
-				int jointsAccessor = -1;
-				int weightsAccessor = -1;
-
-				for(auto& [attrName, accessorIdx] : primitive.attributes) {
-					bool valid =
-						accessorIdx >= 0 &&
-						accessorIdx < static_cast<int>(_arrays.size()) &&
-						_arrays[accessorIdx].valid()
-					;
-
-					GLTF_NOTIFY(4)
-						<< "" << attrName
-						<< " -> accessor[" << accessorIdx << "]"
-						<< (valid ? " OK" : " NULL/INVALID") << std::endl
-					;
-
-					if(!valid) continue;
-
-					if(attrName == "POSITION") geom->setVertexArray(_arrays[accessorIdx].get());
-					else if(attrName == "NORMAL") geom->setNormalArray(_arrays[accessorIdx].get());
-					else if(attrName == "COLOR_0") geom->setColorArray(_arrays[accessorIdx].get());
-					else if(attrName == "TANGENT") {
-						_arrays[accessorIdx]->setBinding(osg::Array::BIND_PER_VERTEX);
-
-						geom->setVertexAttribArray(
-							osgGLTF::shader::TANGENT_ATTRIBUTE,
-							_arrays[accessorIdx].get()
-						);
-					}
-					else if(attrName.rfind("TEXCOORD_", 0) == 0) {
-						int uvSet = std::atoi(attrName.c_str() + 9);
-
-						texCoordSets[uvSet] = _arrays[accessorIdx].get();
-					}
-
-					else if(attrName == "JOINTS_0") jointsAccessor = accessorIdx;
-					else if(attrName == "WEIGHTS_0") weightsAccessor = accessorIdx;
-				}
-
-				if(jointsAccessor >= 0 || weightsAccessor >= 0) {
-					GLTF_NOTIFY(3)
-						<< "skinning attrs:"
-						<< " JOINTS_0=" << jointsAccessor
-						<< " WEIGHTS_0=" << weightsAccessor << std::endl
-					;
-
-					if(skinIdx >= 0 && skinIdx < static_cast<int>(_skins.size())) {
-						if(jointsAccessor >= 0) {
-							_arrays[jointsAccessor]->setBinding(osg::Array::BIND_PER_VERTEX);
-							_arrays[jointsAccessor]->setPreserveDataType(true);
-							geom->setVertexAttribArray(
-								osgGLTF::shader::JOINT_INDICES_ATTRIBUTE,
-								_arrays[jointsAccessor].get()
-							);
-						}
-
-						if(weightsAccessor >= 0) {
-							_arrays[weightsAccessor]->setBinding(osg::Array::BIND_PER_VERTEX);
-							geom->setVertexAttribArray(
-								osgGLTF::shader::JOINT_WEIGHTS_ATTRIBUTE,
-								_arrays[weightsAccessor].get()
-							);
-						}
-					}
-
-					else {
-						GLTF_NOTIFY(3)
-							<< "skinning attrs present, but node has no valid skin; not binding them"
-							<< std::endl
-						;
-					}
-				}
-
-				if(
-					primitive.material >= 0 &&
-					primitive.material < static_cast<int>(_model.materials.size())
-				) {
-					GLTF_NOTIFY(3) << "applyMaterial " << primitive.material << std::endl;
-
-					_materialBuilder.applyMaterial(
-						primitive.material,
-						baseColorFactor,
-						geom,
-						texCoordSets
-					);
-				}
-
-				// fall-back solid color if no COLOR_0
-				if(!geom->getColorArray()) {
-					auto* verts = static_cast<osg::Vec3Array*>(geom->getVertexArray());
-					size_t count = verts ? verts->size() : 1;
-					auto* colors = new osg::Vec4Array(count);
-
-					std::fill(colors->begin(), colors->end(), baseColorFactor);
-
-					geom->setColorArray(colors, osg::Array::BIND_PER_VERTEX);
-				}
-
-				// index primitive set - handles uint8, uint16, uint32
-				if(
-					primitive.indices >= 0 &&
-					primitive.indices < static_cast<int>(_arrays.size()) &&
-					_arrays[primitive.indices].valid()
-				) {
-					int glMode = primitiveMode(primitive.mode);
-					const tinygltf::Accessor& idxAcc = _model.accessors[primitive.indices];
-
-					switch(idxAcc.componentType) {
-						case TINYGLTF_COMPONENT_TYPE_UNSIGNED_BYTE: {
-							auto* src = static_cast<osg::UByteArray*>(_arrays[primitive.indices].get());
-							auto* de = new osg::DrawElementsUByte(glMode, idxAcc.count);
-
-							std::copy(src->begin(), src->end(), de->begin());
-
-							geom->addPrimitiveSet(de);
-
-							break;
-						}
-
-						case TINYGLTF_COMPONENT_TYPE_UNSIGNED_SHORT: {
-							auto* src = static_cast<osg::UShortArray*>(_arrays[primitive.indices].get());
-
-							geom->addPrimitiveSet(new osg::DrawElementsUShort(glMode, src->begin(), src->end()));
-
-							break;
-						}
-
-						case TINYGLTF_COMPONENT_TYPE_UNSIGNED_INT: {
-							auto* src = static_cast<osg::UIntArray*>(_arrays[primitive.indices].get());
-
-							geom->addPrimitiveSet( new osg::DrawElementsUInt(glMode, src->begin(), src->end()));
-
-							break;
-						}
-
-						default:
-							OSG_WARN
-								<< "unsupported index component type "
-								<< idxAcc.componentType << std::endl
-							;
-					}
-				}
-
-				else {
-					// non-indexed: draw all vertices
-					auto* verts = static_cast<osg::Vec3Array*>(geom->getVertexArray());
-
-					if(verts) geom->addPrimitiveSet(new osg::DrawArrays(
-						primitiveMode(primitive.mode),
-						0,
-						verts->size()
-					));
-				}
-
-				// Auto-generate normals for triangle primitives that don't supply them.
-				// SmoothingVisitor assumes triangles - never call it on points/lines.
-				bool isTriangles = (
-					primitive.mode == TINYGLTF_MODE_TRIANGLES ||
-					primitive.mode == TINYGLTF_MODE_TRIANGLE_STRIP ||
-					primitive.mode == TINYGLTF_MODE_TRIANGLE_FAN
-				);
-
-				bool skipNormals =
-					_env._readOptions &&
-					_env._readOptions->getOptionString().find("gltfSkipNormals") != std::string::npos
-				;
-
-				osg::Geode* geode = new osg::Geode();
-
-				geode->addDrawable(geom);
-
-				if(isTriangles && !skipNormals && !geom->getNormalArray()) {
-					GLTF_NOTIFY(3) << "generating normals via SmoothingVisitor" << std::endl;
-
-					osgUtil::SmoothingVisitor sv;
-
-					geode->accept(sv);
-				}
-
-				GLTF_NOTIFY(3) << "addChild geode to mesh group" << std::endl;
-
-				group->addChild(geode);
-
-				primIdx++;
-			}
-
-			return group;
-		}
-
-		static int primitiveMode(int gltfMode) {
-			switch(gltfMode) {
-				case TINYGLTF_MODE_POINTS: return GL_POINTS;
-				case TINYGLTF_MODE_LINE: return GL_LINES;
-				case TINYGLTF_MODE_LINE_LOOP: return GL_LINE_LOOP;
-				case TINYGLTF_MODE_LINE_STRIP: return GL_LINE_STRIP;
-				case TINYGLTF_MODE_TRIANGLES: return GL_TRIANGLES;
-				case TINYGLTF_MODE_TRIANGLE_STRIP: return GL_TRIANGLE_STRIP;
-				case TINYGLTF_MODE_TRIANGLE_FAN: return GL_TRIANGLE_FAN;
-				default: return GL_TRIANGLES;
-			}
 		}
 
 	};
