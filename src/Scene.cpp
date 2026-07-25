@@ -1,6 +1,12 @@
+#include <osgx/Warnings.hpp>
+
+OSGX_DISABLE_WARNINGS
+
 #define TINYGLTF_NOEXCEPTION
 
 #include "tiny_gltf.h"
+
+OSGX_ENABLE_WARNINGS
 
 #include "Scene.hpp"
 #include "Accessor.hpp"
@@ -11,12 +17,16 @@
 #include "Skin.hpp"
 #include "Texture.hpp"
 
+OSGX_DISABLE_WARNINGS
+
 #include <osg/CullFace>
 #include <osg/MatrixTransform>
 #include <osg/observer_ptr>
 #include <osg/ref_ptr>
 
 #include <osgDB/Options>
+
+OSGX_ENABLE_WARNINGS
 
 #include <cstddef>
 #include <vector>
@@ -91,7 +101,8 @@ private:
 	osg::Node* _createNode(int nodeIdx, unsigned depth = 0) {
 		if(nodeIdx < 0 || nodeIdx >= static_cast<int>(_model.nodes.size())) return nullptr;
 
-		const tinygltf::Node& node = _model.nodes[nodeIdx];
+		const size_t nodeIndex = static_cast<size_t>(nodeIdx);
+		const tinygltf::Node& node = _model.nodes[nodeIndex];
 
 		GLTF_NOTIFY(depth)
 			<< "createNode '" << node.name << "'"
@@ -140,18 +151,24 @@ private:
 			transform->setMatrix(scale * rotation * translation);
 		}
 
-		_nodeTransforms[nodeIdx] = transform;
+		_nodeTransforms[nodeIndex] = transform;
 
-		if(
-			node.skin >= 0 &&
-			node.skin < static_cast<int>(_skins.size()) &&
-			_skins[node.skin].valid()
-		) _skins[node.skin]->skinnedNodes.push_back(transform);
+		if(node.skin >= 0) {
+			const size_t skinIndex = static_cast<size_t>(node.skin);
 
-		if(node.mesh >= 0) transform->addChild(_meshBuilder.makeMesh(
-			_model.meshes[node.mesh],
-			node.skin
-		));
+			if(skinIndex < _skins.size() && _skins[skinIndex].valid()) {
+				_skins[skinIndex]->skinnedNodes.push_back(transform);
+			}
+		}
+
+		if(node.mesh >= 0) {
+			const size_t meshIndex = static_cast<size_t>(node.mesh);
+
+			if(meshIndex < _model.meshes.size()) transform->addChild(_meshBuilder.makeMesh(
+				_model.meshes[meshIndex],
+				node.skin
+			));
+		}
 
 		for(int childIdx : node.children) {
 			if(osg::Node* child = _createNode(childIdx, depth + 1)) {

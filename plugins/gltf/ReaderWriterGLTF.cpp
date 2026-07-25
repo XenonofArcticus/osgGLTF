@@ -1,7 +1,11 @@
 #include <osgGLTF/Reader.hpp>
 
+OSGX_DISABLE_WARNINGS
+
 #include <osgDB/FileNameUtils>
 #include <osgDB/Registry>
+
+OSGX_ENABLE_WARNINGS
 
 class ReaderWriterGLTF: public osgDB::ReaderWriter {
 public:

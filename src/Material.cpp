@@ -1,9 +1,17 @@
+#include <osgx/Warnings.hpp>
+
+OSGX_DISABLE_WARNINGS
+
 #define TINYGLTF_NOEXCEPTION
 
 #include "tiny_gltf.h"
 
+OSGX_ENABLE_WARNINGS
+
 #include "Material.hpp"
 #include "Log.hpp"
+
+OSGX_DISABLE_WARNINGS
 
 #include <osg/BlendFunc>
 #include <osg/BufferIndexBinding>
@@ -13,6 +21,8 @@
 #include <osg/Uniform>
 
 #include <osgDB/Options>
+
+OSGX_ENABLE_WARNINGS
 
 #include <osgGLTF/Shader.hpp>
 
@@ -39,7 +49,13 @@ void MaterialBuilder::applyMaterial(
 	osg::Geometry* geom,
 	const std::map<int, osg::Array*>& texCoordSets
 ) const {
-	const tinygltf::Material& mat = _model.materials[matIdx];
+	if(matIdx < 0) return;
+
+	const std::size_t materialIndex = static_cast<std::size_t>(matIdx);
+
+	if(materialIndex >= _model.materials.size()) return;
+
+	const tinygltf::Material& mat = _model.materials[materialIndex];
 	const auto& pbr = mat.pbrMetallicRoughness;
 
 	// sRGB: per the glTF spec, baseColor/diffuse and emissive textures
@@ -47,22 +63,26 @@ void MaterialBuilder::applyMaterial(
 	// roughness/metallic) textures are linear data, not color, and
 	// must never be gamma-decoded.
 	auto bindTexture = [&](int unit, int texIdx, int texCoord, bool sRGB) {
+		if(unit < 0) return;
+
 		osg::Texture2D* tex = _textureLoader.getOrCreateTexture(texIdx, sRGB);
 
 		if(!tex) return;
 
-		geom->getOrCreateStateSet()->setTextureAttributeAndModes(unit, tex);
+		const unsigned int textureUnit = static_cast<unsigned int>(unit);
+
+		geom->getOrCreateStateSet()->setTextureAttributeAndModes(textureUnit, tex);
 
 		auto it = texCoordSets.find(texCoord);
 
-		if(it != texCoordSets.end()) geom->setTexCoordArray(unit, it->second);
+		if(it != texCoordSets.end()) geom->setTexCoordArray(textureUnit, it->second);
 	};
 
 	if(pbr.baseColorFactor.size() == 4) baseColorFactor.set(
-		pbr.baseColorFactor[0],
-		pbr.baseColorFactor[1],
-		pbr.baseColorFactor[2],
-		pbr.baseColorFactor[3]
+		static_cast<float>(pbr.baseColorFactor[0]),
+		static_cast<float>(pbr.baseColorFactor[1]),
+		static_cast<float>(pbr.baseColorFactor[2]),
+		static_cast<float>(pbr.baseColorFactor[3])
 	);
 
 	bool haveCoreBaseColor = pbr.baseColorTexture.index >= 0;
@@ -132,10 +152,14 @@ void MaterialBuilder::applyMaterial(
 			if(
 				pbr.metallicRoughnessTexture.index >= 0 &&
 				pbr.metallicRoughnessTexture.index < static_cast<int>(_model.textures.size())
-			) samplerIdx = _model.textures[pbr.metallicRoughnessTexture.index].sampler;
+			) samplerIdx = _model.textures[
+				static_cast<std::size_t>(pbr.metallicRoughnessTexture.index)
+			].sampler;
 
 			else if(mat.occlusionTexture.index < static_cast<int>(_model.textures.size()))
-				samplerIdx = _model.textures[mat.occlusionTexture.index].sampler;
+				samplerIdx = _model.textures[
+					static_cast<std::size_t>(mat.occlusionTexture.index)
+				].sampler;
 
 			ormTex = new osg::Texture2D(bakedOrm);
 
@@ -339,10 +363,10 @@ void MaterialBuilder::applyMaterial(
 					int samplerIdx = -1;
 
 					if(diffuseIdx >= 0 && diffuseIdx < static_cast<int>(_model.textures.size()))
-						samplerIdx = _model.textures[diffuseIdx].sampler;
+						samplerIdx = _model.textures[static_cast<std::size_t>(diffuseIdx)].sampler;
 
 					else if(specGlossIdx >= 0 && specGlossIdx < static_cast<int>(_model.textures.size()))
-						samplerIdx = _model.textures[specGlossIdx].sampler;
+						samplerIdx = _model.textures[static_cast<std::size_t>(specGlossIdx)].sampler;
 
 					// Baked images are already linear (converted, not
 					// merely re-encoded), so bind them with
@@ -582,11 +606,13 @@ void MaterialBuilder::_bakeSpecGlossToMetalRough(
 		specGlossR->scaleImage(w, h, 1);
 	}
 
-	auto* baseColorData = new unsigned char[static_cast<size_t>(w) * h * 4];
-	auto* ormData = new unsigned char[static_cast<size_t>(w) * h * 3];
+	const unsigned int width = static_cast<unsigned int>(w);
+	const unsigned int height = static_cast<unsigned int>(h);
+	auto* baseColorData = new unsigned char[static_cast<size_t>(width) * height * 4];
+	auto* ormData = new unsigned char[static_cast<size_t>(width) * height * 3];
 
-	for(int y = 0; y < h; y++) {
-		for(int x = 0; x < w; x++) {
+	for(unsigned int y = 0; y < height; y++) {
+		for(unsigned int x = 0; x < width; x++) {
 			osg::Vec4 dTex = diffuseR ? diffuseR->getColor(x, y) : osg::Vec4(1, 1, 1, 1);
 			osg::Vec4 sgTex = specGlossR ? specGlossR->getColor(x, y) : osg::Vec4(1, 1, 1, 1);
 
@@ -627,13 +653,13 @@ void MaterialBuilder::_bakeSpecGlossToMetalRough(
 			float baseB = osg::clampBetween(bcFromDiffuseB * (1.0f - t) + bcFromSpecB * t, 0.0f, 1.0f);
 			float roughness = osg::clampBetween(1.0f - glossiness, 0.0f, 1.0f);
 
-			size_t bi = (static_cast<size_t>(y) * w + x) * 4;
+			size_t bi = (static_cast<size_t>(y) * width + x) * 4;
 			baseColorData[bi + 0] = static_cast<unsigned char>(baseR * 255.0f + 0.5f);
 			baseColorData[bi + 1] = static_cast<unsigned char>(baseG * 255.0f + 0.5f);
 			baseColorData[bi + 2] = static_cast<unsigned char>(baseB * 255.0f + 0.5f);
 			baseColorData[bi + 3] = static_cast<unsigned char>(dTex.w() * diffuseFactor.w() * 255.0f + 0.5f);
 
-			size_t oi = (static_cast<size_t>(y) * w + x) * 3;
+			size_t oi = (static_cast<size_t>(y) * width + x) * 3;
 			ormData[oi + 0] = 255; // AO: spec-gloss carries no occlusion channel
 			ormData[oi + 1] = static_cast<unsigned char>(roughness * 255.0f + 0.5f);
 			ormData[oi + 2] = static_cast<unsigned char>(metallic * 255.0f + 0.5f);
@@ -707,14 +733,16 @@ void MaterialBuilder::_bakeOcclusionIntoOrm(
 		mrR->scaleImage(w, h, 1);
 	}
 
-	auto* ormData = new unsigned char[static_cast<size_t>(w) * h * 3];
+	const unsigned int width = static_cast<unsigned int>(w);
+	const unsigned int height = static_cast<unsigned int>(h);
+	auto* ormData = new unsigned char[static_cast<size_t>(width) * height * 3];
 
-	for(int y = 0; y < h; y++) {
-		for(int x = 0; x < w; x++) {
+	for(unsigned int y = 0; y < height; y++) {
+		for(unsigned int x = 0; x < width; x++) {
 			osg::Vec4 occTex = occR ? occR->getColor(x, y) : osg::Vec4(1, 1, 1, 1);
 			osg::Vec4 mrTex = mrR ? mrR->getColor(x, y) : osg::Vec4(1, 1, 1, 1);
 			float ao = 1.0f + strength * (occTex.x() - 1.0f);
-			size_t oi = (static_cast<size_t>(y) * w + x) * 3;
+			size_t oi = (static_cast<size_t>(y) * width + x) * 3;
 
 			ormData[oi + 0] = static_cast<unsigned char>(osg::clampBetween(ao, 0.0f, 1.0f) * 255.0f + 0.5f);
 			ormData[oi + 1] = static_cast<unsigned char>(mrTex.y() * 255.0f + 0.5f);

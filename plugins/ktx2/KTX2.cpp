@@ -1,10 +1,14 @@
 #include "KTX2.hpp"
 
+OSGX_DISABLE_WARNINGS
+
 #include <osg/GL>
 #include <osg/Image>
 #include <osg/TextureCubeMap>
 
 #include <ktx.h>
+
+OSGX_ENABLE_WARNINGS
 
 #include <algorithm>
 #include <cstdint>
@@ -331,7 +335,10 @@ public:
 
 		ktx_uint32_t vkFmt;
 
-		if(!glToVkFormat(face0->getInternalTextureFormat(), vkFmt)) {
+		if(!glToVkFormat(
+			static_cast<GLenum>(face0->getInternalTextureFormat()),
+			vkFmt
+		)) {
 			OSG_WARN
 				<< "ReaderWriterKTX2: write: unsupported GL internal format "
 				<< face0->getInternalTextureFormat() << std::endl
@@ -423,7 +430,10 @@ public:
 
 		ktx_uint32_t vkFmt;
 
-		if(!glToVkFormat(img->getInternalTextureFormat(), vkFmt)) {
+		if(!glToVkFormat(
+			static_cast<GLenum>(img->getInternalTextureFormat()),
+			vkFmt
+		)) {
 			OSG_WARN
 				<< "ReaderWriterKTX2: write: unsupported GL internal format "
 				<< img->getInternalTextureFormat() << std::endl

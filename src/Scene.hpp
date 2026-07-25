@@ -1,6 +1,12 @@
 #pragma once
 
+#include <osgx/Warnings.hpp>
+
+OSGX_DISABLE_WARNINGS
+
 #include <osg/Node>
+
+OSGX_ENABLE_WARNINGS
 
 #include <osgGLTF/Reader.hpp>
 

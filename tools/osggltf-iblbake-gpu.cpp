@@ -1,11 +1,17 @@
 // osggltf-iblbake-gpu -- bake an equirectangular HDR into a GGX-prefiltered KTX2 cubemap.
 
+#include <osgx/Warnings.hpp>
+
+OSGX_DISABLE_WARNINGS
+
 #include <osg/Notify>
 #include <osgDB/ReadFile>
 #include <osgDB/WriteFile>
 #include <osgViewer/Viewer>
 
 #include <osgx/GGXPrefilter.hpp>
+
+OSGX_ENABLE_WARNINGS
 
 #include <algorithm>
 #include <cstdlib>

@@ -1,8 +1,14 @@
 #pragma once
 
+#include <osgx/Warnings.hpp>
+
+OSGX_DISABLE_WARNINGS
+
 #include <osg/Program>
 #include <osg/StateSet>
 #include <osg/Uniform>
+
+OSGX_ENABLE_WARNINGS
 
 namespace osgGLTF::shader {
 

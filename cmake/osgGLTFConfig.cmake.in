@@ -9,6 +9,7 @@ find_dependency(OpenSceneGraph REQUIRED COMPONENTS
 	osgGA
 	osgUtil
 )
+find_dependency(osgx CONFIG REQUIRED)
 
 include("${CMAKE_CURRENT_LIST_DIR}/osgGLTFTargets.cmake")
 

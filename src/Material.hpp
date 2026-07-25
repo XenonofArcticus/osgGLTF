@@ -2,12 +2,16 @@
 
 #include "Texture.hpp"
 
+OSGX_DISABLE_WARNINGS
+
 #include <osg/Array>
 #include <osg/Geometry>
 #include <osg/Image>
 #include <osg/Vec3>
 #include <osg/Vec4>
 #include <osg/ref_ptr>
+
+OSGX_ENABLE_WARNINGS
 
 #include <map>
 #include <string>

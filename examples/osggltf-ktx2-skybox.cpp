@@ -5,6 +5,10 @@
 // scroll wheel : also adjusts mip level
 // c : toggle flat-cross display
 
+#include <osgx/Warnings.hpp>
+
+OSGX_DISABLE_WARNINGS
+
 #include <osg/Geode>
 #include <osg/Geometry>
 #include <osg/Program>
@@ -19,6 +23,8 @@
 #include <osgGA/GUIEventHandler>
 #include <osgViewer/Viewer>
 #include <osgViewer/ViewerEventHandlers>
+
+OSGX_ENABLE_WARNINGS
 
 #include <iomanip>
 #include <iostream>

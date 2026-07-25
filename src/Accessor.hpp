@@ -1,7 +1,13 @@
 #pragma once
 
+#include <osgx/Warnings.hpp>
+
+OSGX_DISABLE_WARNINGS
+
 #include <osg/Array>
 #include <osg/ref_ptr>
+
+OSGX_ENABLE_WARNINGS
 
 #include <vector>
 

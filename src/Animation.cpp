@@ -1,11 +1,21 @@
+#include <osgx/Warnings.hpp>
+
+OSGX_DISABLE_WARNINGS
+
 #define TINYGLTF_NOEXCEPTION
 
 #include "tiny_gltf.h"
 
+OSGX_ENABLE_WARNINGS
+
 #include "Animation.hpp"
 #include "Log.hpp"
 
+OSGX_DISABLE_WARNINGS
+
 #include <osg/FrameStamp>
+
+OSGX_ENABLE_WARNINGS
 
 #include <algorithm>
 #include <cmath>
@@ -59,13 +69,13 @@ std::vector<float> readFloatTimes(
 	const std::vector<osg::ref_ptr<osg::Array>>& arrays,
 	int accessorIndex
 ) {
-	if(
-		accessorIndex < 0 ||
-		accessorIndex >= static_cast<int>(arrays.size()) ||
-		!arrays[accessorIndex]
-	) return {};
+	if(accessorIndex < 0) return {};
 
-	osg::Array* array = arrays[accessorIndex];
+	const std::size_t arrayIndex = static_cast<std::size_t>(accessorIndex);
+
+	if(arrayIndex >= arrays.size() || !arrays[arrayIndex]) return {};
+
+	osg::Array* array = arrays[arrayIndex];
 	auto* source = dynamic_cast<osg::FloatArray*>(array);
 
 	if(!source) return {};
@@ -77,13 +87,13 @@ std::vector<osg::Vec3d> readVec3Values(
 	const std::vector<osg::ref_ptr<osg::Array>>& arrays,
 	int accessorIndex
 ) {
-	if(
-		accessorIndex < 0 ||
-		accessorIndex >= static_cast<int>(arrays.size()) ||
-		!arrays[accessorIndex]
-	) return {};
+	if(accessorIndex < 0) return {};
 
-	osg::Array* array = arrays[accessorIndex];
+	const std::size_t arrayIndex = static_cast<std::size_t>(accessorIndex);
+
+	if(arrayIndex >= arrays.size() || !arrays[arrayIndex]) return {};
+
+	osg::Array* array = arrays[arrayIndex];
 	auto* source = dynamic_cast<osg::Vec3Array*>(array);
 
 	if(!source) return {};
@@ -103,13 +113,13 @@ std::vector<osg::Quat> readQuatValues(
 	const std::vector<osg::ref_ptr<osg::Array>>& arrays,
 	int accessorIndex
 ) {
-	if(
-		accessorIndex < 0 ||
-		accessorIndex >= static_cast<int>(arrays.size()) ||
-		!arrays[accessorIndex]
-	) return {};
+	if(accessorIndex < 0) return {};
 
-	osg::Array* array = arrays[accessorIndex];
+	const std::size_t arrayIndex = static_cast<std::size_t>(accessorIndex);
+
+	if(arrayIndex >= arrays.size() || !arrays[arrayIndex]) return {};
+
+	osg::Array* array = arrays[arrayIndex];
 	auto* source = dynamic_cast<osg::Vec4Array*>(array);
 
 	if(!source) return {};
@@ -164,19 +174,18 @@ void installAnimationCallback(
 		) {
 			const tinygltf::AnimationChannel& gltfChannel = animation.channels[channelIndex];
 
-			if(
-				gltfChannel.sampler < 0 ||
-				gltfChannel.sampler >= static_cast<int>(animation.samplers.size())
-			) continue;
+			if(gltfChannel.sampler < 0 || gltfChannel.target_node < 0) continue;
 
-			if(
-				gltfChannel.target_node < 0 ||
-				gltfChannel.target_node >= static_cast<int>(nodeTransforms.size()) ||
-				!nodeTransforms[gltfChannel.target_node].valid()
-			) continue;
+			const std::size_t samplerIndex = static_cast<std::size_t>(gltfChannel.sampler);
+			const std::size_t targetNodeIndex = static_cast<std::size_t>(gltfChannel.target_node);
+
+			if(samplerIndex >= animation.samplers.size()) continue;
+			if(targetNodeIndex >= nodeTransforms.size()) continue;
+			if(targetNodeIndex >= model.nodes.size()) continue;
+			if(!nodeTransforms[targetNodeIndex].valid()) continue;
 
 			const tinygltf::AnimationSampler& gltfSampler =
-				animation.samplers[gltfChannel.sampler];
+				animation.samplers[samplerIndex];
 
 			if(gltfSampler.interpolation == "CUBICSPLINE") {
 				GLTF_NOTIFY(2)
@@ -188,7 +197,7 @@ void installAnimationCallback(
 
 			AnimationCallback::Channel channel;
 
-			channel.target = nodeTransforms[gltfChannel.target_node];
+			channel.target = nodeTransforms[targetNodeIndex];
 			channel.targetNode = gltfChannel.target_node;
 			channel.interpolation = gltfSampler.interpolation.empty()
 				? "LINEAR"
@@ -232,7 +241,7 @@ void installAnimationCallback(
 			clip.duration = std::max<double>(clip.duration, channel.times.back());
 			callback->baseTRS.emplace(
 				gltfChannel.target_node,
-				nodeBaseTRS(model.nodes[gltfChannel.target_node])
+				nodeBaseTRS(model.nodes[targetNodeIndex])
 			);
 			clip.channels.push_back(std::move(channel));
 		}

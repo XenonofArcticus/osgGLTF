@@ -1,13 +1,23 @@
+#include <osgx/Warnings.hpp>
+
+OSGX_DISABLE_WARNINGS
+
 #define TINYGLTF_NOEXCEPTION
 
 #include "tiny_gltf.h"
+
+OSGX_ENABLE_WARNINGS
 
 #include "ReaderImpl.hpp"
 #include "Log.hpp"
 #include "Scene.hpp"
 
+OSGX_DISABLE_WARNINGS
+
 #include <osgDB/FileNameUtils>
 #include <osgDB/Options>
+
+OSGX_ENABLE_WARNINGS
 
 #include <cstddef>
 #include <string>
@@ -109,7 +119,7 @@ void logAnimationBits(const tinygltf::Model& model) {
 			int nodeIdx = skin.joints[jointIdx];
 			const char* nodeName =
 				nodeIdx >= 0 && nodeIdx < static_cast<int>(model.nodes.size())
-				? model.nodes[nodeIdx].name.c_str()
+				? model.nodes[static_cast<size_t>(nodeIdx)].name.c_str()
 				: ""
 			;
 
@@ -146,7 +156,7 @@ void logAnimationBits(const tinygltf::Model& model) {
 			const char* nodeName =
 				channel.target_node >= 0 &&
 				channel.target_node < static_cast<int>(model.nodes.size())
-				? model.nodes[channel.target_node].name.c_str()
+				? model.nodes[static_cast<size_t>(channel.target_node)].name.c_str()
 				: ""
 			;
 

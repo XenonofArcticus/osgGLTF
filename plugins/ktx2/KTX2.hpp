@@ -1,6 +1,12 @@
 #pragma once
 
+#include <osgx/Warnings.hpp>
+
+OSGX_DISABLE_WARNINGS
+
 #include <osgDB/ReaderWriter>
+
+OSGX_ENABLE_WARNINGS
 
 #include <string>
 

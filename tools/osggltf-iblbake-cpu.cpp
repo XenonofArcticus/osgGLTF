@@ -6,12 +6,18 @@
 // no intermediate cubemap step. Output is identical in format to ibl-bake (GPU).
 // Uses OpenMP when available.
 
+#include <osgx/Warnings.hpp>
+
+OSGX_DISABLE_WARNINGS
+
 #define STB_IMAGE_IMPLEMENTATION
 #define STBI_ONLY_HDR
 #define STBI_ONLY_PIC // HDR format uses Radiance RGBE internally
 #include <stb_image.h>
 
 #include <ktx.h>
+
+OSGX_ENABLE_WARNINGS
 
 #include <algorithm>
 #include <cassert>
@@ -24,7 +30,9 @@
 #include <vector>
 
 #ifdef _OPENMP
+OSGX_DISABLE_WARNINGS
 # include <omp.h>
+OSGX_ENABLE_WARNINGS
 #endif
 
 #ifndef M_PI
@@ -271,15 +279,19 @@ int main(int argc, char* argv[])
 
 	// Allocate float32 buffers for all mips, all faces
 	// Layout: [mip][face][pixels * 3]
-	std::vector<std::vector<std::vector<float>>> data(numMips,
+	std::vector<std::vector<std::vector<float>>> data(static_cast<size_t>(numMips),
 		std::vector<std::vector<float>>(6));
 
 	for (int mip = 0; mip < numMips; ++mip) {
 		int mipSize = std::max(1, prefilterSize >> mip);
 		float roughness = (numMips > 1) ? float(mip) / float(numMips - 1) : 0.0f;
+		const size_t mipIndex = static_cast<size_t>(mip);
+		const size_t mipWidth = static_cast<size_t>(mipSize);
 
 		for (int face = 0; face < 6; ++face) {
-			data[mip][face].resize(static_cast<size_t>(mipSize) * mipSize * 3, 0.0f);
+			const size_t faceIndex = static_cast<size_t>(face);
+
+			data[mipIndex][faceIndex].resize(mipWidth * mipWidth * 3, 0.0f);
 			std::cout
 				<< " baking mip " << mip << "/" << numMips - 1
 				<< " face " << face << " size=" << mipSize
@@ -287,7 +299,7 @@ int main(int argc, char* argv[])
 				<< " ..." << std::defaultfloat << std::endl;
 
 			bakeFaceMip(hdr, hdrW, hdrH,
-				data[mip][face].data(), mipSize,
+				data[mipIndex][faceIndex].data(), mipSize,
 				face, roughness, numSamples);
 		}
 	}
@@ -321,13 +333,15 @@ int main(int argc, char* argv[])
 
 	for (int mip = 0; mip < numMips; ++mip) {
 		int mipSize = std::max(1, prefilterSize >> mip);
-		size_t pixelCount = static_cast<size_t>(mipSize) * mipSize;
+		const size_t mipIndex = static_cast<size_t>(mip);
+		size_t pixelCount = static_cast<size_t>(mipSize) * static_cast<size_t>(mipSize);
 
 		// Convert float32 -> float16 per face
 		std::vector<uint16_t> f16(pixelCount * 3);
 
 		for (int face = 0; face < 6; ++face) {
-			const auto& f32 = data[mip][face];
+			const size_t faceIndex = static_cast<size_t>(face);
+			const auto& f32 = data[mipIndex][faceIndex];
 			for (size_t k = 0; k < pixelCount * 3; ++k)
 				f16[k] = f32_to_f16(f32[k]);
 

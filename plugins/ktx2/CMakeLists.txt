@@ -4,6 +4,7 @@ add_library(osgKTX2 STATIC
 add_library(osgKTX2::osgKTX2 ALIAS osgKTX2)
 
 target_compile_features(osgKTX2 PUBLIC cxx_std_20)
+osggltf_compile_options(osgKTX2)
 target_sources(osgKTX2 PUBLIC
 	"$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/KTX2.hpp>"
 )
@@ -24,6 +25,7 @@ add_library(osgdb_ktx2 MODULE
 	ReaderWriterKTX2.cpp
 )
 
+osggltf_compile_options(osgdb_ktx2)
 target_link_libraries(osgdb_ktx2 PRIVATE osgKTX2::osgKTX2)
 
 set_target_properties(osgdb_ktx2 PROPERTIES

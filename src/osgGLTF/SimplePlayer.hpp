@@ -1,8 +1,14 @@
 #pragma once
 
+#include <osgx/Warnings.hpp>
+
+OSGX_DISABLE_WARNINGS
+
 #include <osg/Callback>
 #include <osg/Node>
 #include <osg/ref_ptr>
+
+OSGX_ENABLE_WARNINGS
 
 #include <cstddef>
 #include <limits>

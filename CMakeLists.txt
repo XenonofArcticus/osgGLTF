@@ -24,6 +24,35 @@ option(OSGGLTF_BUILD_EXAMPLES "Build the osgGLTF examples" ${OSGGLTF_IS_TOP_LEVE
 option(OSGGLTF_BUILD_PYTHON "Build the osgGLTF Python module" ${OSGGLTF_BUILD_PYTHON_DEFAULT})
 option(OSGGLTF_INSTALL "Generate osgGLTF installation rules" ${OSGGLTF_IS_TOP_LEVEL})
 
+if(WIN32)
+	set(OSGGLTF_WARNING_OPTIONS
+		/W4
+		/WX
+		/wd4100
+		/analyze
+	)
+elseif(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+	set(OSGGLTF_WARNING_OPTIONS
+		-W
+		-Wall
+		-Wshadow
+		-Wconversion
+		-Wsign-conversion
+		-Wfloat-conversion
+		-Wpedantic
+		-Wextra
+		-Werror
+		-Wno-unused-parameter
+	)
+else()
+	set(OSGGLTF_WARNING_OPTIONS)
+endif()
+
+function(OSGGLTF_COMPILE_OPTIONS _target)
+	target_compile_options("${_target}" PRIVATE ${OSGGLTF_WARNING_OPTIONS})
+	target_link_libraries("${_target}" PRIVATE osgx::core)
+endfunction()
+
 find_package(OpenSceneGraph REQUIRED
 	osg
 	osgDB
@@ -31,6 +60,7 @@ find_package(OpenSceneGraph REQUIRED
 	osgGA
 	osgUtil
 )
+find_package(osgx CONFIG REQUIRED)
 
 if(OSGGLTF_BUILD_PYTHON)
 	if(NOT OSG_PYTHON_DIR)
@@ -69,10 +99,6 @@ if(OSGGLTF_BUILD_KTX2 OR OSGGLTF_BUILD_TOOLS)
 	set(KTX_FEATURE_DOC OFF CACHE BOOL "" FORCE)
 	set(KTX_FEATURE_LOADTEST_APPS OFF CACHE BOOL "" FORCE)
 	add_subdirectory("ext/KTX-Software")
-endif()
-
-if(OSGGLTF_BUILD_TOOLS)
-	find_package(osgx CONFIG REQUIRED)
 endif()
 
 add_subdirectory("src")
@@ -115,7 +141,7 @@ if(OSGGLTF_BUILD_PYTHON)
 		pybind11::module
 	)
 	target_compile_features(osgGLTF_python PUBLIC cxx_std_20)
-	# target_compile_options(osgGLTF_python PRIVATE ${SLUGHORN_COMPILE_OPTIONS})
+	osggltf_compile_options(osgGLTF_python)
 	set_target_properties(osgGLTF_python PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
 	# ext/osgGLTF-python.cpp pulls in ext/tinygltf/json.hpp, which uses the now-deprecated

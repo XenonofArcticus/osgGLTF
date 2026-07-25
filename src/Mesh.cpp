@@ -1,11 +1,19 @@
+#include <osgx/Warnings.hpp>
+
+OSGX_DISABLE_WARNINGS
+
 #define TINYGLTF_NOEXCEPTION
 
 #include "tiny_gltf.h"
+
+OSGX_ENABLE_WARNINGS
 
 #include "Mesh.hpp"
 #include "Log.hpp"
 #include "Material.hpp"
 #include "Skin.hpp"
+
+OSGX_DISABLE_WARNINGS
 
 #include <osg/Geode>
 #include <osg/Geometry>
@@ -13,6 +21,8 @@
 #include <osgDB/Options>
 
 #include <osgUtil/SmoothingVisitor>
+
+OSGX_ENABLE_WARNINGS
 
 #include <osgGLTF/Shader.hpp>
 
@@ -47,7 +57,7 @@ osg::Group* MeshBuilder::makeMesh(const tinygltf::Mesh& mesh, int skinIdx) const
 
 	group->setName(mesh.name);
 
-	int primIdx = 0;
+	std::size_t primIdx = 0;
 
 	for(auto& primitive : mesh.primitives) {
 		GLTF_NOTIFY(2)
@@ -74,11 +84,13 @@ osg::Group* MeshBuilder::makeMesh(const tinygltf::Mesh& mesh, int skinIdx) const
 		int weightsAccessor = -1;
 
 		for(auto& [attrName, accessorIdx] : primitive.attributes) {
-			bool valid =
-				accessorIdx >= 0 &&
-				accessorIdx < static_cast<int>(_arrays.size()) &&
-				_arrays[accessorIdx].valid()
+			const bool nonnegative = accessorIdx >= 0;
+			const std::size_t arrayIndex = nonnegative
+				? static_cast<std::size_t>(accessorIdx)
+				: 0
 			;
+			const bool valid =
+				nonnegative && arrayIndex < _arrays.size() && _arrays[arrayIndex].valid();
 
 			GLTF_NOTIFY(4)
 				<< "" << attrName
@@ -88,21 +100,21 @@ osg::Group* MeshBuilder::makeMesh(const tinygltf::Mesh& mesh, int skinIdx) const
 
 			if(!valid) continue;
 
-			if(attrName == "POSITION") geom->setVertexArray(_arrays[accessorIdx]);
-			else if(attrName == "NORMAL") geom->setNormalArray(_arrays[accessorIdx]);
-			else if(attrName == "COLOR_0") geom->setColorArray(_arrays[accessorIdx]);
+			if(attrName == "POSITION") geom->setVertexArray(_arrays[arrayIndex]);
+			else if(attrName == "NORMAL") geom->setNormalArray(_arrays[arrayIndex]);
+			else if(attrName == "COLOR_0") geom->setColorArray(_arrays[arrayIndex]);
 			else if(attrName == "TANGENT") {
-				_arrays[accessorIdx]->setBinding(osg::Array::BIND_PER_VERTEX);
+				_arrays[arrayIndex]->setBinding(osg::Array::BIND_PER_VERTEX);
 
 				geom->setVertexAttribArray(
 					osgGLTF::shader::TANGENT_ATTRIBUTE,
-					_arrays[accessorIdx]
+					_arrays[arrayIndex]
 				);
 			}
 			else if(attrName.rfind("TEXCOORD_", 0) == 0) {
 				int uvSet = std::atoi(attrName.c_str() + 9);
 
-				texCoordSets[uvSet] = _arrays[accessorIdx];
+				texCoordSets[uvSet] = _arrays[arrayIndex];
 			}
 
 			else if(attrName == "JOINTS_0") jointsAccessor = accessorIdx;
@@ -116,21 +128,25 @@ osg::Group* MeshBuilder::makeMesh(const tinygltf::Mesh& mesh, int skinIdx) const
 				<< " WEIGHTS_0=" << weightsAccessor << std::endl
 			;
 
-			if(skinIdx >= 0 && skinIdx < static_cast<int>(_skins.size())) {
+			if(skinIdx >= 0 && static_cast<std::size_t>(skinIdx) < _skins.size()) {
 				if(jointsAccessor >= 0) {
-					_arrays[jointsAccessor]->setBinding(osg::Array::BIND_PER_VERTEX);
-					_arrays[jointsAccessor]->setPreserveDataType(true);
+					const std::size_t jointsIndex = static_cast<std::size_t>(jointsAccessor);
+
+					_arrays[jointsIndex]->setBinding(osg::Array::BIND_PER_VERTEX);
+					_arrays[jointsIndex]->setPreserveDataType(true);
 					geom->setVertexAttribArray(
 						osgGLTF::shader::JOINT_INDICES_ATTRIBUTE,
-						_arrays[jointsAccessor]
+						_arrays[jointsIndex]
 					);
 				}
 
 				if(weightsAccessor >= 0) {
-					_arrays[weightsAccessor]->setBinding(osg::Array::BIND_PER_VERTEX);
+					const std::size_t weightsIndex = static_cast<std::size_t>(weightsAccessor);
+
+					_arrays[weightsIndex]->setBinding(osg::Array::BIND_PER_VERTEX);
 					geom->setVertexAttribArray(
 						osgGLTF::shader::JOINT_WEIGHTS_ATTRIBUTE,
-						_arrays[weightsAccessor]
+						_arrays[weightsIndex]
 					);
 				}
 			}
@@ -160,7 +176,10 @@ osg::Group* MeshBuilder::makeMesh(const tinygltf::Mesh& mesh, int skinIdx) const
 		// Fall back to a solid color if COLOR_0 is absent.
 		if(!geom->getColorArray()) {
 			auto* verts = static_cast<osg::Vec3Array*>(geom->getVertexArray());
-			size_t count = verts ? verts->size() : 1;
+			const unsigned int count = verts
+				? static_cast<unsigned int>(verts->size())
+				: 1
+			;
 			auto* colors = new osg::Vec4Array(count);
 
 			std::fill(colors->begin(), colors->end(), baseColorFactor);
@@ -169,19 +188,29 @@ osg::Group* MeshBuilder::makeMesh(const tinygltf::Mesh& mesh, int skinIdx) const
 		}
 
 		// Index primitive set: uint8, uint16, or uint32.
+		const bool haveIndex = primitive.indices >= 0;
+		const std::size_t indexAccessor = haveIndex
+			? static_cast<std::size_t>(primitive.indices)
+			: 0
+		;
+
 		if(
-			primitive.indices >= 0 &&
-			primitive.indices < static_cast<int>(_arrays.size()) &&
-			_arrays[primitive.indices].valid()
+			haveIndex &&
+			indexAccessor < _arrays.size() &&
+			indexAccessor < _model.accessors.size() &&
+			_arrays[indexAccessor].valid()
 		) {
-			int glMode = _primitiveMode(primitive.mode);
-			const tinygltf::Accessor& idxAcc = _model.accessors[primitive.indices];
-			osg::Array* indexArray = _arrays[primitive.indices];
+			const GLenum glMode = _primitiveMode(primitive.mode);
+			const tinygltf::Accessor& idxAcc = _model.accessors[indexAccessor];
+			osg::Array* indexArray = _arrays[indexAccessor];
 
 			switch(idxAcc.componentType) {
 				case TINYGLTF_COMPONENT_TYPE_UNSIGNED_BYTE: {
 					auto* src = static_cast<osg::UByteArray*>(indexArray);
-					auto* de = new osg::DrawElementsUByte(glMode, idxAcc.count);
+					auto* de = new osg::DrawElementsUByte(
+						glMode,
+						static_cast<unsigned int>(idxAcc.count)
+					);
 
 					std::copy(src->begin(), src->end(), de->begin());
 
@@ -229,7 +258,7 @@ osg::Group* MeshBuilder::makeMesh(const tinygltf::Mesh& mesh, int skinIdx) const
 			if(verts) geom->addPrimitiveSet(new osg::DrawArrays(
 				_primitiveMode(primitive.mode),
 				0,
-				verts->size()
+				static_cast<GLsizei>(verts->size())
 			));
 		}
 
@@ -267,7 +296,7 @@ osg::Group* MeshBuilder::makeMesh(const tinygltf::Mesh& mesh, int skinIdx) const
 	return group;
 }
 
-int MeshBuilder::_primitiveMode(int gltfMode) {
+GLenum MeshBuilder::_primitiveMode(int gltfMode) {
 	switch(gltfMode) {
 		case TINYGLTF_MODE_POINTS: return GL_POINTS;
 		case TINYGLTF_MODE_LINE: return GL_LINES;

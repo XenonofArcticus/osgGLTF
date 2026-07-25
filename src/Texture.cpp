@@ -1,13 +1,23 @@
+#include <osgx/Warnings.hpp>
+
+OSGX_DISABLE_WARNINGS
+
 #define TINYGLTF_NOEXCEPTION
 
 #include "tiny_gltf.h"
 
+OSGX_ENABLE_WARNINGS
+
 #include "Texture.hpp"
+
+OSGX_DISABLE_WARNINGS
 
 #include <osg/Image>
 
 #include <osgDB/FileNameUtils>
 #include <osgDB/ReadFile>
+
+OSGX_ENABLE_WARNINGS
 
 #include <cstring>
 
@@ -58,7 +68,10 @@ osg::Image* TextureLoader::loadRawImage(int textureIndex) const {
 
 	if(!source.image.empty()) {
 		const GLenum pixelFormat = source.component == 4 ? GL_RGBA : GL_RGB;
-		const GLenum internalFormat = source.component == 4 ? GL_RGBA8 : GL_RGB8;
+		const GLint internalFormat = source.component == 4
+			? static_cast<GLint>(GL_RGBA8)
+			: static_cast<GLint>(GL_RGB8)
+		;
 		auto* data = new unsigned char[source.image.size()];
 
 		std::memcpy(data, source.image.data(), source.image.size());
@@ -106,6 +119,7 @@ void TextureLoader::applyFormatAndSampler(
 	texture->setDataVariance(osg::Object::STATIC);
 	texture->setFilter(osg::Texture::MIN_FILTER, osg::Texture::LINEAR_MIPMAP_LINEAR);
 	texture->setFilter(osg::Texture::MAG_FILTER, osg::Texture::LINEAR);
+	texture->setMaxAnisotropy(16.0f);
 
 	if(samplerIndex >= 0 && samplerIndex < static_cast<int>(_model.samplers.size())) {
 		const tinygltf::Sampler& sampler =

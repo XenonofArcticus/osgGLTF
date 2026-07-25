@@ -1,15 +1,21 @@
 #pragma once
 
+#include <osgx/Warnings.hpp>
+
+OSGX_DISABLE_WARNINGS
+
 #include <osg/Array>
 #include <osg/Group>
 #include <osg/ref_ptr>
+
+OSGX_ENABLE_WARNINGS
 
 #include <vector>
 
 namespace osgDB { class Options; }
 namespace tinygltf {
-class Mesh;
 class Model;
+struct Mesh;
 }
 
 namespace osgGLTF::detail {
@@ -36,7 +42,7 @@ private:
 	const std::vector<osg::ref_ptr<osg::Array>>& _arrays;
 	const std::vector<osg::ref_ptr<Skin>>& _skins;
 
-	static int _primitiveMode(int gltfMode);
+	static GLenum _primitiveMode(int gltfMode);
 };
 
 }

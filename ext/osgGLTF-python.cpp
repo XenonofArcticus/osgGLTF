@@ -1,5 +1,9 @@
 //vimrun! ./test.py
 
+#include <osgx/Warnings.hpp>
+
+OSGX_DISABLE_WARNINGS
+
 #define TINYGLTF_NOEXCEPTION
 
 #include "osgGLTF/Reader.hpp"
@@ -14,6 +18,8 @@
 #include "pybind11x.hpp"
 
 #include "tiny_gltf.h"
+
+OSGX_ENABLE_WARNINGS
 
 #include <algorithm>
 #include <map>
@@ -74,7 +80,7 @@ py::object maybeString(const std::string& value) {
 py::object maybeNodeName(const tinygltf::Model& model, int nodeIdx) {
 	if(nodeIdx < 0 || nodeIdx >= static_cast<int>(model.nodes.size())) return py::none();
 
-	return maybeString(model.nodes[nodeIdx].name);
+	return maybeString(model.nodes[static_cast<size_t>(nodeIdx)].name);
 }
 
 py::dict accessorInfo(const tinygltf::Model& model, int accessorIdx) {
@@ -87,7 +93,7 @@ py::dict accessorInfo(const tinygltf::Model& model, int accessorIdx) {
 		return out;
 	}
 
-	const tinygltf::Accessor& accessor = model.accessors[accessorIdx];
+	const tinygltf::Accessor& accessor = model.accessors[static_cast<size_t>(accessorIdx)];
 
 	out["valid"] = true;
 	out["name"] = maybeString(accessor.name);
@@ -118,7 +124,7 @@ py::dict textureInfo(const tinygltf::Model& model, int textureIdx, int texCoord)
 	out["texCoord"] = texCoord;
 
 	if(textureIdx >= 0 && textureIdx < static_cast<int>(model.textures.size())) {
-		const tinygltf::Texture& texture = model.textures[textureIdx];
+		const tinygltf::Texture& texture = model.textures[static_cast<size_t>(textureIdx)];
 
 		out["valid"] = true;
 		out["name"] = maybeString(texture.name);
@@ -126,7 +132,7 @@ py::dict textureInfo(const tinygltf::Model& model, int textureIdx, int texCoord)
 		out["sampler"] = texture.sampler;
 
 		if(texture.source >= 0 && texture.source < static_cast<int>(model.images.size())) {
-			const tinygltf::Image& image = model.images[texture.source];
+			const tinygltf::Image& image = model.images[static_cast<size_t>(texture.source)];
 
 			out["imageName"] = maybeString(image.name);
 			out["imageUri"] = maybeString(image.uri);
@@ -182,7 +188,7 @@ py::list numberList(const std::vector<double>& values) {
 }
 
 py::dict materialInfo(const tinygltf::Model& model, int materialIdx) {
-	const tinygltf::Material& material = model.materials[materialIdx];
+	const tinygltf::Material& material = model.materials[static_cast<size_t>(materialIdx)];
 	const tinygltf::PbrMetallicRoughness& pbr = material.pbrMetallicRoughness;
 
 	py::dict out;
@@ -253,7 +259,9 @@ py::dict primitiveInfo(const tinygltf::Model& model, const tinygltf::Primitive& 
 	out["material"] = primitive.material;
 
 	if(primitive.material >= 0 && primitive.material < static_cast<int>(model.materials.size())) {
-		out["materialName"] = maybeString(model.materials[primitive.material].name);
+		out["materialName"] = maybeString(
+			model.materials[static_cast<size_t>(primitive.material)].name
+		);
 	}
 
 	for(const auto& [name, accessorIdx] : primitive.attributes) {
@@ -271,7 +279,7 @@ py::dict primitiveInfo(const tinygltf::Model& model, const tinygltf::Primitive& 
 }
 
 py::dict meshInfo(const tinygltf::Model& model, int meshIdx) {
-	const tinygltf::Mesh& mesh = model.meshes[meshIdx];
+	const tinygltf::Mesh& mesh = model.meshes[static_cast<size_t>(meshIdx)];
 	py::dict out;
 	py::list primitives;
 
@@ -289,7 +297,7 @@ py::dict meshInfo(const tinygltf::Model& model, int meshIdx) {
 }
 
 py::dict skinInfo(const tinygltf::Model& model, int skinIdx) {
-	const tinygltf::Skin& skin = model.skins[skinIdx];
+	const tinygltf::Skin& skin = model.skins[static_cast<size_t>(skinIdx)];
 	py::dict out;
 	py::list joints;
 	py::list users;
@@ -323,7 +331,9 @@ py::dict skinInfo(const tinygltf::Model& model, int skinIdx) {
 		user["mesh"] = node.mesh;
 
 		if(node.mesh >= 0 && node.mesh < static_cast<int>(model.meshes.size())) {
-			user["meshName"] = maybeString(model.meshes[node.mesh].name);
+			user["meshName"] = maybeString(
+				model.meshes[static_cast<size_t>(node.mesh)].name
+			);
 		}
 
 		users.append(user);
@@ -341,14 +351,15 @@ py::dict skinInfo(const tinygltf::Model& model, int skinIdx) {
 
 	out["inverseBindMatricesMatchJointCount"] =
 		ibm >= 0 &&
-		model.accessors[ibm].count == skin.joints.size()
+		model.accessors[static_cast<size_t>(ibm)].count == skin.joints.size()
 	;
 
 	return out;
 }
 
 py::dict animationInfo(const tinygltf::Model& model, int animationIdx) {
-	const tinygltf::Animation& animation = model.animations[animationIdx];
+	const tinygltf::Animation& animation =
+		model.animations[static_cast<size_t>(animationIdx)];
 	py::dict out;
 	py::list samplers;
 	py::list channels;
@@ -371,10 +382,13 @@ py::dict animationInfo(const tinygltf::Model& model, int animationIdx) {
 		if(
 			sampler.input >= 0 &&
 			sampler.input < static_cast<int>(model.accessors.size()) &&
-			!model.accessors[sampler.input].maxValues.empty()
+			!model.accessors[static_cast<size_t>(sampler.input)].maxValues.empty()
 		) {
-			duration = std::max(duration, model.accessors[sampler.input].maxValues[0]);
-			item["endTime"] = model.accessors[sampler.input].maxValues[0];
+			const tinygltf::Accessor& input =
+				model.accessors[static_cast<size_t>(sampler.input)];
+
+			duration = std::max(duration, input.maxValues[0]);
+			item["endTime"] = input.maxValues[0];
 		}
 
 		interpolations.insert(sampler.interpolation.empty() ? "LINEAR" : sampler.interpolation);

@@ -1,23 +1,42 @@
+#include <osgx/Warnings.hpp>
+
+OSGX_DISABLE_WARNINGS
+
 #define TINYGLTF_NOEXCEPTION
 
 #include "tiny_gltf.h"
+
+OSGX_ENABLE_WARNINGS
 
 #include "Skin.hpp"
 
 #include "Log.hpp"
 
+OSGX_DISABLE_WARNINGS
+
 #include <osg/BufferIndexBinding>
 #include <osg/BufferObject>
+
+OSGX_ENABLE_WARNINGS
 
 #include <osgGLTF/Shader.hpp>
 
 #include <algorithm>
+#include <limits>
 #include <unordered_map>
 
 namespace osgGLTF::detail {
 
 void Skin::initPalette() {
-	paletteMatrices = new osg::MatrixfArray(inverseBindMatrices.size());
+	if(inverseBindMatrices.size() > std::numeric_limits<unsigned int>::max()) {
+		paletteMatrices = new osg::MatrixfArray();
+
+		return;
+	}
+
+	paletteMatrices = new osg::MatrixfArray(
+		static_cast<unsigned int>(inverseBindMatrices.size())
+	);
 
 	std::fill(
 		paletteMatrices->begin(),
@@ -28,15 +47,15 @@ void Skin::initPalette() {
 	paletteMatrices->setBufferObject(new osg::ShaderStorageBufferObject());
 }
 
-osg::Matrixd Skin::computeJointWorld(std::size_t index) {
-	if(jointWorldComputed[index]) return jointWorldCache[index];
+osg::Matrixd Skin::computeJointWorld(std::size_t jointIndex) {
+	if(jointWorldComputed[jointIndex]) return jointWorldCache[jointIndex];
 
 	osg::ref_ptr<osg::MatrixTransform> joint;
 
-	jointNodes[index].lock(joint);
+	jointNodes[jointIndex].lock(joint);
 
 	osg::Matrixd local = joint ? joint->getMatrix() : osg::Matrixd::identity();
-	int parent = parentJointIndex[index];
+	int parent = parentJointIndex[jointIndex];
 	osg::Matrixd world;
 
 	if(parent >= 0) {
@@ -48,8 +67,8 @@ osg::Matrixd Skin::computeJointWorld(std::size_t index) {
 		world = worlds.empty() ? local : worlds.front();
 	}
 
-	jointWorldCache[index] = world;
-	jointWorldComputed[index] = 1;
+	jointWorldCache[jointIndex] = world;
+	jointWorldComputed[jointIndex] = 1;
 
 	return world;
 }
@@ -143,9 +162,9 @@ std::vector<osg::ref_ptr<Skin>> prepareSkins(
 					skin->inverseBindMatrices.size()
 				);
 
-				std::copy(
+				std::copy_n(
 					inverseBindMatrices->begin(),
-					inverseBindMatrices->begin() + count,
+					count,
 					skin->inverseBindMatrices.begin()
 				);
 

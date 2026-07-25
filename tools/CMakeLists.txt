@@ -3,6 +3,7 @@ add_executable(osggltf-iblbake-gpu
 	osggltf-iblbake-gpu.cpp
 )
 
+osggltf_compile_options(osggltf-iblbake-gpu)
 target_include_directories(osggltf-iblbake-gpu PRIVATE
 	${OPENSCENEGRAPH_INCLUDE_DIRS}
 )
@@ -18,6 +19,7 @@ add_executable(osggltf-iblbake-cpu
 	osggltf-iblbake-cpu.cpp
 )
 
+osggltf_compile_options(osggltf-iblbake-cpu)
 target_include_directories(osggltf-iblbake-cpu PRIVATE
 	${PROJECT_SOURCE_DIR}/ext/tinygltf
 	${PROJECT_SOURCE_DIR}/ext/KTX-Software/lib/include

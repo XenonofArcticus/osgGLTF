@@ -1,11 +1,15 @@
 #include "KTX2.hpp"
 
+OSGX_DISABLE_WARNINGS
+
 #include <osg/Image>
 #include <osg/TextureCubeMap>
 
 #include <osgDB/FileNameUtils>
 #include <osgDB/FileUtils>
 #include <osgDB/Registry>
+
+OSGX_ENABLE_WARNINGS
 
 class ReaderWriterKTX2: public osgDB::ReaderWriter {
 public:

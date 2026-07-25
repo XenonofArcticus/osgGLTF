@@ -1,11 +1,17 @@
 #pragma once
 
+#include <osgx/Warnings.hpp>
+
+OSGX_DISABLE_WARNINGS
+
 #include <osg/Array>
 #include <osg/Callback>
 #include <osg/MatrixTransform>
 #include <osg/Referenced>
 #include <osg/observer_ptr>
 #include <osg/ref_ptr>
+
+OSGX_ENABLE_WARNINGS
 
 #include <cstddef>
 #include <string>
@@ -33,7 +39,7 @@ struct Skin: public osg::Referenced {
 	std::vector<char> jointWorldComputed;
 
 	void initPalette();
-	osg::Matrixd computeJointWorld(std::size_t index);
+	osg::Matrixd computeJointWorld(std::size_t jointIndex);
 	bool updatePalette(osg::Node* skinnedNode);
 };
 

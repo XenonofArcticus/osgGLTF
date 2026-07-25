@@ -1,6 +1,12 @@
+#include <osgx/Warnings.hpp>
+
+OSGX_DISABLE_WARNINGS
+
 #define TINYGLTF_NOEXCEPTION
 
 #include "tiny_gltf.h"
+
+OSGX_ENABLE_WARNINGS
 
 #include "Accessor.hpp"
 #include "Log.hpp"
@@ -8,6 +14,8 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <limits>
+#include <type_traits>
 
 namespace osgGLTF::detail {
 namespace {
@@ -18,17 +26,31 @@ OSGArray* makeTypedArray(
 	const tinygltf::BufferView& bufferView,
 	const tinygltf::Accessor& accessor
 ) {
-	auto* array = new OSGArray(accessor.count);
+	if(accessor.count > std::numeric_limits<unsigned int>::max()) return nullptr;
+
+	auto* array = new OSGArray(static_cast<unsigned int>(accessor.count));
 
 	if(accessor.count == 0) return array;
 
 	const std::int32_t componentSize = tinygltf::GetComponentSizeInBytes(ComponentType);
 	const std::int32_t componentCount = tinygltf::GetNumComponentsInType(AccessorType);
 	const std::size_t elementSize = static_cast<std::size_t>(componentSize * componentCount);
+	const std::size_t sourceStride = bufferView.byteStride == 0
+		? elementSize
+		: bufferView.byteStride
+	;
 	const unsigned char* source =
 		buffer.data.data() + bufferView.byteOffset + accessor.byteOffset;
 
-	if(bufferView.byteStride == 0) {
+	if constexpr(std::is_same_v<typename OSGArray::value_type, osg::Matrixf>) {
+		for(std::size_t i = 0; i < accessor.count; i++, source += sourceStride) {
+			float values[16];
+
+			std::memcpy(values, source, sizeof(values));
+			(*array)[i].set(values);
+		}
+	}
+	else if(bufferView.byteStride == 0) {
 		std::memcpy(&(*array)[0], source, elementSize * accessor.count);
 	}
 	else {

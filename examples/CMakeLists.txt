@@ -2,6 +2,7 @@ find_package(OpenSceneGraph REQUIRED osg osgDB osgViewer osgGA)
 
 add_executable(osggltf-ktx2-skybox osggltf-ktx2-skybox.cpp)
 
+osggltf_compile_options(osggltf-ktx2-skybox)
 target_include_directories(osggltf-ktx2-skybox PRIVATE
     ${OPENSCENEGRAPH_INCLUDE_DIRS}
 )

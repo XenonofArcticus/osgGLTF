@@ -1,5 +1,9 @@
 #pragma once
 
+#include <osgx/Warnings.hpp>
+
+OSGX_DISABLE_WARNINGS
+
 #include <osg/Array>
 #include <osg/Callback>
 #include <osg/Matrixd>
@@ -9,6 +13,8 @@
 #include <osg/Vec3d>
 #include <osg/observer_ptr>
 #include <osg/ref_ptr>
+
+OSGX_ENABLE_WARNINGS
 
 #include <osgGLTF/SimplePlayer.hpp>
 

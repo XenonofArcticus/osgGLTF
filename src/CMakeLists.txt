@@ -13,6 +13,7 @@ add_library(osgGLTF
 add_library(osgGLTF::osgGLTF ALIAS osgGLTF)
 
 target_compile_features(osgGLTF PUBLIC cxx_std_20)
+osggltf_compile_options(osgGLTF)
 target_include_directories(osgGLTF
 	PUBLIC
 		$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>
@@ -38,6 +39,7 @@ target_sources(osgGLTF PRIVATE
 	Texture.hpp
 )
 target_link_libraries(osgGLTF PUBLIC
+	osgx::core
 	"$<BUILD_INTERFACE:${OPENSCENEGRAPH_LIBRARIES}>"
 )
 set_target_properties(osgGLTF PROPERTIES

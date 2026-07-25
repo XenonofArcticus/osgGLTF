@@ -2,6 +2,7 @@ add_library(osgdb_gltf MODULE
 	ReaderWriterGLTF.cpp
 )
 
+osggltf_compile_options(osgdb_gltf)
 target_link_libraries(osgdb_gltf PRIVATE osgGLTF::osgGLTF)
 
 set_target_properties(osgdb_gltf PROPERTIES
