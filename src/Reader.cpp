@@ -1,7 +1,5 @@
-#define TINYGLTF_NOEXCEPTION
-
-#include "tiny_gltf.h"
-#include "GLTFReader.hpp"
+#include "ReaderImpl.hpp"
+#include "Texture.hpp"
 
 #include <osgGLTF/Reader.hpp>
 
@@ -10,7 +8,7 @@
 namespace osgGLTF {
 
 struct Reader::TextureCache::Implementation {
-	GLTFReader::TextureCache cache;
+	detail::TextureCache cache;
 };
 
 Reader::TextureCache::TextureCache():
@@ -26,7 +24,7 @@ osgDB::ReaderWriter::ReadResult Reader::read(
 	const osgDB::Options* options,
 	const ProgressCallback& progress
 ) const {
-	GLTFReader reader;
+	detail::ReaderImpl reader;
 
 	if(_textureCache) reader.setTextureCache(&_textureCache->_implementation->cache);
 

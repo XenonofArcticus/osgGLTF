@@ -4,6 +4,7 @@ add_library(osgGLTF
 	Material.cpp
 	Mesh.cpp
 	Reader.cpp
+	ReaderImpl.cpp
 	Scene.cpp
 	Skin.cpp
 	Texture.cpp
@@ -28,10 +29,10 @@ target_sources(osgGLTF PUBLIC
 target_sources(osgGLTF PRIVATE
 	Accessor.hpp
 	Animation.hpp
-	GLTFReader.hpp
 	Log.hpp
 	Material.hpp
 	Mesh.hpp
+	ReaderImpl.hpp
 	Scene.hpp
 	Skin.hpp
 	Texture.hpp
@@ -49,7 +50,7 @@ set_target_properties(osgGLTF PROPERTIES
 # the deprecated std::is_pod trait; isolate that third-party warning to these translation units.
 if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
 	set_source_files_properties(
-		Accessor.cpp Animation.cpp Material.cpp Mesh.cpp Reader.cpp Scene.cpp Skin.cpp Texture.cpp TinyGLTF.cpp
+		Accessor.cpp Animation.cpp Material.cpp Mesh.cpp Reader.cpp ReaderImpl.cpp Scene.cpp Skin.cpp Texture.cpp TinyGLTF.cpp
 		PROPERTIES
 		COMPILE_OPTIONS "-Wno-deprecated-declarations"
 	)
