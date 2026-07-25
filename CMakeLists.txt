@@ -82,6 +82,10 @@ if(OSGGLTF_BUILD_KTX2)
 	add_subdirectory("plugins/ktx2")
 endif()
 
+if(OSGGLTF_BUILD_TOOLS)
+	add_subdirectory("tools")
+endif()
+
 if(OSGGLTF_BUILD_EXAMPLES)
 	add_subdirectory("examples")
 endif()
