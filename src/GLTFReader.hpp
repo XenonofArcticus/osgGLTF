@@ -4,9 +4,8 @@
 // Stripped: URI class, InstanceBuilder, StateTransition, shaderGenerator,
 // DiscardAlphaFragments, Mutexed<UnorderedMap>, OWT_state extension.
 //
-// Replaced: osgEarth::URI image loading -> osgDB::readImageFile,
-// osgEarth logging macros -> OSG_WARN/GLTF_NOTIFY,
-// osgEarth mutex wrapper -> std::mutex + std::lock_guard.
+// Replaced: osgEarth::URI image loading -> osgDB image loading,
+// osgEarth logging macros -> OSG_WARN/GLTF_NOTIFY.
 
 // Private implementation detail: TinyGLTF.cpp instantiates tinygltf/STB. Reader.cpp includes the
 // tinygltf declarations before this file. Consumers use osgGLTF/Reader.hpp and never include this
@@ -28,9 +27,8 @@
 #include <osgUtil/SmoothingVisitor>
 
 #include <osgDB/FileNameUtils>
-#include <osgDB/ReadFile>
+#include <osgDB/Options>
 #include <osgDB/ReaderWriter>
-#include <osgDB/Registry>
 
 #include <osgGLTF/Shader.hpp>
 #include <osgGLTF/Reader.hpp>
@@ -39,33 +37,22 @@
 #include <cmath>
 #include <cstdlib>
 #include <map>
-#include <mutex>
-#include <unordered_map>
 #include <string>
 
 // tiny_gltf.h is intentionally NOT included here - see file comment above.
-
-#ifndef GL_SRGB8
-# define GL_SRGB8 0x8C41
-#endif
-#ifndef GL_SRGB8_ALPHA8
-# define GL_SRGB8_ALPHA8 0x8C43
-#endif
 
 #include "Accessor.hpp"
 #include "Animation.hpp"
 #include "Log.hpp"
 #include "Skin.hpp"
+#include "Texture.hpp"
 
 class GLTFReader {
 public:
 	using Stage = osgGLTF::Reader::Stage;
 	using ProgressCallback = osgGLTF::Reader::ProgressCallback;
 
-	struct TextureCache {
-		std::mutex mutex;
-		std::unordered_map<std::string, osg::ref_ptr<osg::Texture2D>> map;
-	};
+	using TextureCache = osgGLTF::detail::TextureCache;
 
 	struct Env {
 		Env(const std::string& loc, const osgDB::Options* opt):
@@ -349,9 +336,9 @@ public:
 	}
 
 	struct NodeBuilder {
-		const GLTFReader* reader;
 		const tinygltf::Model& model;
 		const Env& env;
+		osgGLTF::detail::TextureLoader textureLoader;
 		ProgressCallback progress;
 		std::vector<osg::ref_ptr<osg::Array>> arrays;
 		std::vector<osg::ref_ptr<osgGLTF::detail::Skin>> skins;
@@ -364,9 +351,9 @@ public:
 			const Env& e,
 			const ProgressCallback& p=nullptr
 		):
-		reader(r),
 		model(m),
 		env(e),
+		textureLoader(m, e.referrer, e.readOptions, r->_texCache),
 		progress(p) {
 			nodeTransforms.resize(m.nodes.size());
 
@@ -707,7 +694,7 @@ public:
 			// roughness/metallic) textures are linear data, not color, and
 			// must never be gamma-decoded.
 			auto bindTexture = [&](int unit, int texIdx, int texCoord, bool sRGB) {
-				osg::Texture2D* tex = getOrCreateTexture(texIdx, sRGB);
+				osg::Texture2D* tex = textureLoader.getOrCreateTexture(texIdx, sRGB);
 
 				if(!tex) return;
 
@@ -761,21 +748,13 @@ public:
 
 			if(haveOcclusion && !sameOcclusionImage) {
 				std::string bakeKey = env.referrer + "|orm-occlusion|" + std::to_string(matIdx);
-				TextureCache* tc = reader->_texCache;
-
-				osg::ref_ptr<osg::Texture2D> ormTex;
-
-				if(tc) {
-					std::lock_guard<std::mutex> lk(tc->mutex);
-
-					auto it = tc->map.find(bakeKey);
-
-					if(it != tc->map.end()) ormTex = it->second;
-				}
+				osg::ref_ptr<osg::Texture2D> ormTex = textureLoader.findCached(bakeKey);
 
 				if(!ormTex.valid()) {
-					osg::ref_ptr<osg::Image> occImg = loadRawImage(mat.occlusionTexture.index);
-					osg::ref_ptr<osg::Image> mrImg = loadRawImage(pbr.metallicRoughnessTexture.index);
+					osg::ref_ptr<osg::Image> occImg =
+						textureLoader.loadRawImage(mat.occlusionTexture.index);
+					osg::ref_ptr<osg::Image> mrImg =
+						textureLoader.loadRawImage(pbr.metallicRoughnessTexture.index);
 
 					if(mat.occlusionTexture.texCoord != pbr.metallicRoughnessTexture.texCoord) {
 						GLTF_NOTIFY(3)
@@ -807,15 +786,11 @@ public:
 
 					ormTex = new osg::Texture2D(bakedOrm.get());
 
-					applyTextureFormatAndSampler(ormTex.get(), bakedOrm.get(), false, samplerIdx);
+					textureLoader.applyFormatAndSampler(ormTex, bakedOrm, false, samplerIdx);
 
 					ormTex->setUnRefImageDataAfterApply(true);
 
-					if(tc) {
-						std::lock_guard<std::mutex> lk(tc->mutex);
-
-						tc->map[bakeKey] = ormTex;
-					}
+					textureLoader.cache(bakeKey, ormTex);
 				}
 
 				geom->getOrCreateStateSet()->setTextureAttributeAndModes(
@@ -949,21 +924,10 @@ public:
 						// Cache by referrer+matIdx, same TextureCache the
 						// texIdx-keyed path already uses.
 						std::string bakeKey = env.referrer + "|specgloss|" + std::to_string(matIdx);
-						TextureCache* tc = reader->_texCache;
-
-						osg::ref_ptr<osg::Texture2D> bcTex, ormTex;
-
-						if(tc) {
-							std::lock_guard<std::mutex> lk(tc->mutex);
-
-							auto bcIt = tc->map.find(bakeKey + "|bc");
-							auto ormIt = tc->map.find(bakeKey + "|orm");
-
-							if(bcIt != tc->map.end() && ormIt != tc->map.end()) {
-								bcTex = bcIt->second;
-								ormTex = ormIt->second;
-							}
-						}
+						osg::ref_ptr<osg::Texture2D> bcTex =
+							textureLoader.findCached(bakeKey + "|bc");
+						osg::ref_ptr<osg::Texture2D> ormTex =
+							textureLoader.findCached(bakeKey + "|orm");
 
 						if(!bcTex.valid() || !ormTex.valid()) {
 							// The bake combines diffuse and specGloss pixel-
@@ -988,8 +952,10 @@ public:
 								;
 							}
 
-							osg::ref_ptr<osg::Image> diffuseImg = loadRawImage(diffuseIdx);
-							osg::ref_ptr<osg::Image> specGlossImg = loadRawImage(specGlossIdx);
+							osg::ref_ptr<osg::Image> diffuseImg =
+								textureLoader.loadRawImage(diffuseIdx);
+							osg::ref_ptr<osg::Image> specGlossImg =
+								textureLoader.loadRawImage(specGlossIdx);
 							osg::ref_ptr<osg::Image> bakedBaseColor, bakedOrm;
 
 							// Hint for next time someone sees a multi-second stall between
@@ -1030,20 +996,26 @@ public:
 							// sRGB=false - GPU sRGB decode must not run twice.
 							bcTex = new osg::Texture2D(bakedBaseColor.get());
 
-							applyTextureFormatAndSampler(bcTex.get(), bakedBaseColor.get(), false, samplerIdx);
+							textureLoader.applyFormatAndSampler(
+								bcTex,
+								bakedBaseColor,
+								false,
+								samplerIdx
+							);
 							bcTex->setUnRefImageDataAfterApply(true);
 
 							ormTex = new osg::Texture2D(bakedOrm.get());
 
-							applyTextureFormatAndSampler(ormTex.get(), bakedOrm.get(), false, samplerIdx);
+							textureLoader.applyFormatAndSampler(
+								ormTex,
+								bakedOrm,
+								false,
+								samplerIdx
+							);
 							ormTex->setUnRefImageDataAfterApply(true);
 
-							if(tc) {
-								std::lock_guard<std::mutex> lk(tc->mutex);
-
-								tc->map[bakeKey + "|bc"] = bcTex;
-								tc->map[bakeKey + "|orm"] = ormTex;
-							}
+							textureLoader.cache(bakeKey + "|bc", bcTex);
+							textureLoader.cache(bakeKey + "|orm", ormTex);
 						}
 
 						geom->getOrCreateStateSet()->setTextureAttributeAndModes(
@@ -1186,140 +1158,6 @@ public:
 			if(mat.doubleSided) {
 				geom->getOrCreateStateSet()->setMode(GL_CULL_FACE, osg::StateAttribute::OFF);
 			}
-		}
-
-		// Decodes a glTF texture's source image to raw pixel data - no GL
-		// format/sRGB tagging, no caching. Shared by getOrCreateTexture()
-		// and the spec-gloss->metal-rough bake below, which both need pixel
-		// access independent of how the image ends up being sampled.
-		osg::Image* loadRawImage(int texIdx) const {
-			if(texIdx < 0 || texIdx >= static_cast<int>(model.textures.size())) return nullptr;
-
-			const tinygltf::Texture& tex = model.textures[texIdx];
-
-			if(tex.source < 0 || tex.source >= static_cast<int>(model.images.size())) return nullptr;
-
-			const tinygltf::Image& image = model.images[tex.source];
-
-			osg::ref_ptr<osg::Image> img;
-
-			if(image.image.size() > 0) {
-				// Image data already decoded by tiny_gltf (embedded or preloaded).
-				GLenum fmt = (image.component == 4) ? GL_RGBA : GL_RGB;
-				GLenum ifmt = (image.component == 4) ? GL_RGBA8 : GL_RGB8;
-				auto* data = new unsigned char[image.image.size()];
-
-				memcpy(data, image.image.data(), image.image.size());
-
-				img = new osg::Image();
-
-				img->setImage(
-					image.width,
-					image.height,
-					1,
-					ifmt,
-					fmt,
-					GL_UNSIGNED_BYTE,
-					data,
-					osg::Image::USE_NEW_DELETE
-				);
-			}
-
-			else if(!image.uri.empty() && !tinygltf::IsDataURI(image.uri)) {
-				std::string path = osgDB::concatPaths(
-					osgDB::getFilePath(env.referrer),
-					image.uri
-				);
-
-				img = osgDB::readImageFile(path, env.readOptions);
-
-				if(img.valid()) img->flipVertical();
-			}
-
-			return img.release();
-		}
-
-		// Sets internal (sRGB-aware) format and sampler filter/wrap state on
-		// a Texture2D already constructed from `img`. Shared between
-		// texIdx-addressed textures and synthetic (baked) images.
-		void applyTextureFormatAndSampler(
-			osg::Texture2D* osgTex,
-			osg::Image* img,
-			bool sRGB,
-			int samplerIdx
-		) const {
-			if(img->getPixelFormat() == GL_RGB) img->setInternalTextureFormat(sRGB ? GL_SRGB8 : GL_RGB8);
-			if(img->getPixelFormat() == GL_RGBA) img->setInternalTextureFormat(sRGB ? GL_SRGB8_ALPHA8 : GL_RGBA8);
-
-			osgTex->setResizeNonPowerOfTwoHint(false);
-			osgTex->setDataVariance(osg::Object::STATIC);
-
-			if(samplerIdx >= 0 && samplerIdx < static_cast<int>(model.samplers.size())) {
-				const tinygltf::Sampler& s = model.samplers[samplerIdx];
-				// Force mipmap min-filter regardless of what the sampler says,
-				// since we don't generate mipmaps on load.
-				osgTex->setFilter(osg::Texture::MIN_FILTER, osg::Texture::LINEAR_MIPMAP_LINEAR);
-				osgTex->setFilter(osg::Texture::MAG_FILTER, osg::Texture::LINEAR);
-				osgTex->setWrap(osg::Texture::WRAP_S, static_cast<osg::Texture::WrapMode>(s.wrapS));
-				osgTex->setWrap(osg::Texture::WRAP_T, static_cast<osg::Texture::WrapMode>(s.wrapT));
-			}
-
-			else {
-				osgTex->setFilter(osg::Texture::MIN_FILTER, osg::Texture::LINEAR_MIPMAP_LINEAR);
-				osgTex->setFilter(osg::Texture::MAG_FILTER, osg::Texture::LINEAR);
-				osgTex->setWrap(osg::Texture::WRAP_S, osg::Texture::CLAMP_TO_EDGE);
-				osgTex->setWrap(osg::Texture::WRAP_T, osg::Texture::CLAMP_TO_EDGE);
-			}
-		}
-
-		// sRGB must be known per-texture-*use*, not per-image-file: the same
-		// image could in principle be referenced once as a color texture and
-		// once as linear data, so the cache key includes the color-space flag
-		// to avoid one use silently reusing the other's decode setting.
-		osg::Texture2D* getOrCreateTexture(int texIdx, bool sRGB) const {
-			if(texIdx < 0 || texIdx >= static_cast<int>(model.textures.size())) return nullptr;
-
-			const tinygltf::Texture& tex = model.textures[texIdx];
-
-			if(tex.source < 0 || tex.source >= static_cast<int>(model.images.size())) return nullptr;
-
-			const tinygltf::Image& image = model.images[tex.source];
-			bool embedded = image.image.size() > 0 || (!image.uri.empty() && tinygltf::IsDataURI(image.uri));
-
-			// Cache key: resolved file path for external images, empty for embedded.
-			std::string cacheKey;
-
-			if(!embedded && !image.uri.empty()) cacheKey = osgDB::getRealPath(osgDB::concatPaths(
-				osgDB::getFilePath(env.referrer), image.uri))
-				+ (sRGB ? "|sRGB" : "|linear")
-			;
-
-			TextureCache* tc = reader->_texCache;
-
-			if(tc && !cacheKey.empty()) {
-				std::lock_guard<std::mutex> lk(tc->mutex);
-
-				auto it = tc->map.find(cacheKey);
-
-				if(it != tc->map.end()) return it->second.get();
-			}
-
-			osg::ref_ptr<osg::Image> img = loadRawImage(texIdx);
-
-			if(!img.valid()) return nullptr;
-
-			osg::ref_ptr<osg::Texture2D> osgTex = new osg::Texture2D(img.get());
-
-			applyTextureFormatAndSampler(osgTex.get(), img.get(), sRGB, tex.sampler);
-			osgTex->setUnRefImageDataAfterApply(embedded);
-
-			if(tc && !cacheKey.empty()) {
-				std::lock_guard<std::mutex> lk(tc->mutex);
-
-				tc->map[cacheKey] = osgTex;
-			}
-
-			return osgTex.release();
 		}
 
 		// KHR_materials_pbrSpecularGlossiness is legacy, but real Sketchfab-era content still uses
