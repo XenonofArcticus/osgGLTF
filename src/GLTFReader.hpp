@@ -52,6 +52,7 @@
 # define GL_SRGB8_ALPHA8 0x8C43
 #endif
 
+#include "Accessor.hpp"
 #include "Animation.hpp"
 #include "Log.hpp"
 #include "Skin.hpp"
@@ -369,11 +370,7 @@ public:
 		progress(p) {
 			nodeTransforms.resize(m.nodes.size());
 
-			GLTF_NOTIFY(0) << "extractArrays - " << m.accessors.size() << " accessor(s)" << std::endl;
-
-			extractArrays();
-
-			GLTF_NOTIFY(0) << "extractArrays done - " << arrays.size() << " array(s) built" << std::endl;
+			arrays = osgGLTF::detail::extractArrays(model);
 
 			skins = osgGLTF::detail::prepareSkins(model, arrays);
 		}
@@ -1552,154 +1549,5 @@ public:
 			}
 		}
 
-		// Parameterized on OSG array type + glTF component/accessor types
-		// so the compiler can produce a single fast memcpy per combination.
-		template<typename OSGArray, int ComponentType, int AccessorType>
-		struct ArrayBuilder {
-			static OSGArray* make(
-				const tinygltf::Buffer& buf,
-				const tinygltf::BufferView& bv,
-				const tinygltf::Accessor& acc
-			) {
-				auto* arr = new OSGArray(acc.count);
-				int32_t compSize = tinygltf::GetComponentSizeInBytes(ComponentType);
-				int32_t numComp = tinygltf::GetNumComponentsInType(AccessorType);
-				const auto* src = buf.data.data() + bv.byteOffset + acc.byteOffset;
-
-				if(bv.byteStride == 0) memcpy(&(*arr)[0], src, compSize * numComp * acc.count);
-
-				else {
-					for(size_t i = 0; i < acc.count; i++, src += bv.byteStride) memcpy(
-						&(*arr)[i],
-						src,
-						compSize * numComp
-					);
-				}
-
-				return arr;
-			}
-		};
-
-		void extractArrays() {
-			int accIdx = 0;
-
-			for(auto& acc : model.accessors) {
-				GLTF_NOTIFY(1)
-					<< "accessor[" << accIdx << "]"
-					<< " componentType=" << acc.componentType
-					<< " type=" << acc.type
-					<< " count=" << acc.count
-					<< " bufferView=" << acc.bufferView << std::endl
-				;
-
-				// Accessors without a bufferView are valid (e.g. sparse base
-				// data is implicitly zero). Push a null placeholder so indices
-				// into the arrays vector stay in sync with accessor indices.
-				if(
-					acc.bufferView < 0 ||
-					acc.bufferView >= static_cast<int>(model.bufferViews.size())
-				) {
-					GLTF_NOTIFY(2) << "-> no bufferView, skipping" << std::endl;
-
-					arrays.push_back({});
-
-					accIdx++;
-
-					continue;
-				}
-
-				const auto& bv = model.bufferViews[acc.bufferView];
-				const auto& buf = model.buffers[bv.buffer];
-				osg::ref_ptr<osg::Array> a;
-
-// TODO: I HATE THIS CODE!
-#define MAKE(OsgT, Comp, Type) ArrayBuilder<OsgT, Comp, Type>::make(buf, bv, acc)
-
-				// TODO: I HATE THIS CODE!
-				switch(acc.componentType) {
-				case TINYGLTF_COMPONENT_TYPE_BYTE:
-					switch(acc.type) {
-					case TINYGLTF_TYPE_SCALAR: a = MAKE(osg::ByteArray, TINYGLTF_COMPONENT_TYPE_BYTE, TINYGLTF_TYPE_SCALAR); break;
-					case TINYGLTF_TYPE_VEC2: a = MAKE(osg::Vec2bArray, TINYGLTF_COMPONENT_TYPE_BYTE, TINYGLTF_TYPE_VEC2); break;
-					case TINYGLTF_TYPE_VEC3: a = MAKE(osg::Vec3bArray, TINYGLTF_COMPONENT_TYPE_BYTE, TINYGLTF_TYPE_VEC3); break;
-					case TINYGLTF_TYPE_VEC4: a = MAKE(osg::Vec4bArray, TINYGLTF_COMPONENT_TYPE_BYTE, TINYGLTF_TYPE_VEC4); break;
-					default: break; } break;
-
-				case TINYGLTF_COMPONENT_TYPE_UNSIGNED_BYTE:
-					switch(acc.type) {
-					case TINYGLTF_TYPE_SCALAR: a = MAKE(osg::UByteArray, TINYGLTF_COMPONENT_TYPE_UNSIGNED_BYTE, TINYGLTF_TYPE_SCALAR); break;
-					case TINYGLTF_TYPE_VEC2: a = MAKE(osg::Vec2ubArray, TINYGLTF_COMPONENT_TYPE_UNSIGNED_BYTE, TINYGLTF_TYPE_VEC2); break;
-					case TINYGLTF_TYPE_VEC3: a = MAKE(osg::Vec3ubArray, TINYGLTF_COMPONENT_TYPE_UNSIGNED_BYTE, TINYGLTF_TYPE_VEC3); break;
-					case TINYGLTF_TYPE_VEC4: a = MAKE(osg::Vec4ubArray, TINYGLTF_COMPONENT_TYPE_UNSIGNED_BYTE, TINYGLTF_TYPE_VEC4); break;
-					default: break; } break;
-
-				case TINYGLTF_COMPONENT_TYPE_SHORT:
-					switch(acc.type) {
-					case TINYGLTF_TYPE_SCALAR: a = MAKE(osg::ShortArray, TINYGLTF_COMPONENT_TYPE_SHORT, TINYGLTF_TYPE_SCALAR); break;
-					case TINYGLTF_TYPE_VEC2: a = MAKE(osg::Vec2sArray, TINYGLTF_COMPONENT_TYPE_SHORT, TINYGLTF_TYPE_VEC2); break;
-					case TINYGLTF_TYPE_VEC3: a = MAKE(osg::Vec3sArray, TINYGLTF_COMPONENT_TYPE_SHORT, TINYGLTF_TYPE_VEC3); break;
-					case TINYGLTF_TYPE_VEC4: a = MAKE(osg::Vec4sArray, TINYGLTF_COMPONENT_TYPE_SHORT, TINYGLTF_TYPE_VEC4); break;
-					default: break; } break;
-
-				case TINYGLTF_COMPONENT_TYPE_UNSIGNED_SHORT:
-					switch(acc.type) {
-					case TINYGLTF_TYPE_SCALAR: a = MAKE(osg::UShortArray, TINYGLTF_COMPONENT_TYPE_UNSIGNED_SHORT, TINYGLTF_TYPE_SCALAR); break;
-					case TINYGLTF_TYPE_VEC2: a = MAKE(osg::Vec2usArray, TINYGLTF_COMPONENT_TYPE_UNSIGNED_SHORT, TINYGLTF_TYPE_VEC2); break;
-					case TINYGLTF_TYPE_VEC3: a = MAKE(osg::Vec3usArray, TINYGLTF_COMPONENT_TYPE_UNSIGNED_SHORT, TINYGLTF_TYPE_VEC3); break;
-					case TINYGLTF_TYPE_VEC4: a = MAKE(osg::Vec4usArray, TINYGLTF_COMPONENT_TYPE_UNSIGNED_SHORT, TINYGLTF_TYPE_VEC4); break;
-					default: break; } break;
-
-				case TINYGLTF_COMPONENT_TYPE_INT:
-					switch(acc.type) {
-					case TINYGLTF_TYPE_SCALAR: a = MAKE(osg::IntArray, TINYGLTF_COMPONENT_TYPE_INT, TINYGLTF_TYPE_SCALAR); break;
-					case TINYGLTF_TYPE_VEC2: a = MAKE(osg::Vec2iArray, TINYGLTF_COMPONENT_TYPE_INT, TINYGLTF_TYPE_VEC2); break;
-					case TINYGLTF_TYPE_VEC3: a = MAKE(osg::Vec3iArray, TINYGLTF_COMPONENT_TYPE_INT, TINYGLTF_TYPE_VEC3); break;
-					case TINYGLTF_TYPE_VEC4: a = MAKE(osg::Vec4iArray, TINYGLTF_COMPONENT_TYPE_INT, TINYGLTF_TYPE_VEC4); break;
-					default: break; } break;
-
-				case TINYGLTF_COMPONENT_TYPE_UNSIGNED_INT:
-					switch(acc.type) {
-					case TINYGLTF_TYPE_SCALAR: a = MAKE(osg::UIntArray, TINYGLTF_COMPONENT_TYPE_UNSIGNED_INT, TINYGLTF_TYPE_SCALAR); break;
-					case TINYGLTF_TYPE_VEC2: a = MAKE(osg::Vec2uiArray, TINYGLTF_COMPONENT_TYPE_UNSIGNED_INT, TINYGLTF_TYPE_VEC2); break;
-					case TINYGLTF_TYPE_VEC3: a = MAKE(osg::Vec3uiArray, TINYGLTF_COMPONENT_TYPE_UNSIGNED_INT, TINYGLTF_TYPE_VEC3); break;
-					case TINYGLTF_TYPE_VEC4: a = MAKE(osg::Vec4uiArray, TINYGLTF_COMPONENT_TYPE_UNSIGNED_INT, TINYGLTF_TYPE_VEC4); break;
-					default: break; } break;
-
-				case TINYGLTF_COMPONENT_TYPE_FLOAT:
-					switch(acc.type) {
-					case TINYGLTF_TYPE_SCALAR: a = MAKE(osg::FloatArray, TINYGLTF_COMPONENT_TYPE_FLOAT, TINYGLTF_TYPE_SCALAR); break;
-					case TINYGLTF_TYPE_VEC2: a = MAKE(osg::Vec2Array, TINYGLTF_COMPONENT_TYPE_FLOAT, TINYGLTF_TYPE_VEC2); break;
-					case TINYGLTF_TYPE_VEC3: a = MAKE(osg::Vec3Array, TINYGLTF_COMPONENT_TYPE_FLOAT, TINYGLTF_TYPE_VEC3); break;
-					case TINYGLTF_TYPE_VEC4: a = MAKE(osg::Vec4Array, TINYGLTF_COMPONENT_TYPE_FLOAT, TINYGLTF_TYPE_VEC4); break;
-					case TINYGLTF_TYPE_MAT4: a = MAKE(osg::MatrixfArray, TINYGLTF_COMPONENT_TYPE_FLOAT, TINYGLTF_TYPE_MAT4); break;
-					default: break; } break;
-
-				default:
-					GLTF_NOTIFY(2)
-						<< "unknown component type "
-						<< acc.componentType << std::endl
-					;
-
-					break;
-				}
-
-#undef MAKE
-
-				if(a.valid()) {
-					a->setBinding(osg::Array::BIND_PER_VERTEX);
-					a->setNormalize(acc.normalized);
-
-					GLTF_NOTIFY(2) << "-> built array, " << a->getNumElements() << " element(s)" << std::endl;
-				}
-
-				else {
-					GLTF_NOTIFY(2) << "-> no array built (unhandled type combination)" << std::endl;
-				}
-
-				arrays.push_back(a);
-
-				accIdx++;
-			}
-		}
 	};
 };

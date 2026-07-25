@@ -1,4 +1,5 @@
 add_library(osgGLTF
+	Accessor.cpp
 	Animation.cpp
 	Reader.cpp
 	Skin.cpp
@@ -21,6 +22,7 @@ target_sources(osgGLTF PUBLIC
 	"$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/osgGLTF/SimplePlayer.hpp>"
 )
 target_sources(osgGLTF PRIVATE
+	Accessor.hpp
 	Animation.hpp
 	GLTFReader.hpp
 	Log.hpp
@@ -38,7 +40,7 @@ set_target_properties(osgGLTF PROPERTIES
 # TinyGLTF.cpp owns the single tinygltf/STB implementation. tinygltf's bundled JSON header uses
 # the deprecated std::is_pod trait; isolate that third-party warning to these translation units.
 if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
-	set_source_files_properties(Animation.cpp Reader.cpp Skin.cpp TinyGLTF.cpp PROPERTIES
+	set_source_files_properties(Accessor.cpp Animation.cpp Reader.cpp Skin.cpp TinyGLTF.cpp PROPERTIES
 		COMPILE_OPTIONS "-Wno-deprecated-declarations"
 	)
 endif()
