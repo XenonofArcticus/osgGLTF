@@ -104,7 +104,7 @@ public:
 	}
 
 	bool playAnimation(const std::string& name) override {
-		for(std::size_t i = 0; i < clips.size(); ++i) {
+		for(std::size_t i = 0; i < clips.size(); i++) {
 			if(clips[i].name == name) return playAnimation(i);
 		}
 

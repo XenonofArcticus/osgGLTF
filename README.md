@@ -55,6 +55,23 @@ cmake -S . -B BUILD \
 When osgGLTF is embedded with `add_subdirectory()`, the optional layers and installation rules are
 disabled by default. The glTF plugin itself remains available to the parent project.
 
+The compiled loader can be consumed directly without going through osgDB plugin discovery:
+
+```cmake
+find_package(osgGLTF CONFIG REQUIRED)
+target_link_libraries(my_target PRIVATE osgGLTF::osgGLTF)
+```
+
+```cpp
+#include <osgGLTF/Reader.hpp>
+
+osgGLTF::Reader reader;
+auto result = reader.read(path, isBinary, options);
+```
+
+`osgdb_gltf` and the Python module both link this same loader target; neither recompiles the reader
+implementation or instantiates its own copy of tinygltf/STB source.
+
 ## Shader Interface
 
 osgGLTF loads geometry and materials without imposing a particular renderer. The public

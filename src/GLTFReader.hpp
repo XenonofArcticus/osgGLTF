@@ -8,10 +8,8 @@
 // osgEarth logging macros -> OSG_WARN/GLTF_NOTIFY,
 // osgEarth mutex wrapper -> std::mutex + std::lock_guard.
 
-// IMPORTANT: Do NOT include this header before tiny_gltf.h. The including .cpp must define
-// TINYGLTF_IMPLEMENTATION (and the STB implementation macros) and include tiny_gltf.h first, then
-// include this file. This is the standard pattern for single-header STB-style libraries --
-// stb_image.h must only be instantiated once per link target.
+// Private implementation detail: Reader.cpp instantiates tinygltf/STB, includes tiny_gltf.h, then
+// includes this file. Consumers use osgGLTF/Reader.hpp and never include this implementation.
 
 #pragma once
 
@@ -33,15 +31,14 @@
 #include <osgDB/Registry>
 
 #include <osgGLTF/Shader.hpp>
+#include <osgGLTF/Reader.hpp>
 
 #include <algorithm>
 #include <cmath>
 #include <cstdlib>
-#include <functional>
 #include <map>
 #include <mutex>
 #include <ostream>
-#include <string_view>
 #include <unordered_map>
 #include <string>
 
@@ -73,31 +70,8 @@ inline std::ostream& gltfNotify(osg::NotifySeverity severity, size_t indent=0) {
 
 class GLTFReader {
 public:
-	// Fixed, strictly sequential progress stages for read(): Parsing -> LoadingTextures ->
-	// BuildingNodes. Contract: within a stage `current` is non-decreasing, and every stage
-	// emits a final current==total tick before the next stage's first event. `total` is
-	// always a real known count (Parsing/LoadingTextures use a cheap metadata-only pre-pass
-	// to learn the image count up front - see read() -- so there is no indeterminate/
-	// unknown-total case to represent).
-	enum class Stage { Parsing, LoadingTextures, BuildingNodes };
-
-	static constexpr std::string_view stageName(Stage stage) {
-		switch(stage) {
-			case Stage::Parsing: return "parsing";
-			case Stage::LoadingTextures: return "loading_textures";
-			case Stage::BuildingNodes: return "building_nodes";
-		}
-
-		return "";
-	}
-
-	// Optional progress hook for async/threaded loads (see osgGLTF-python.cpp's async reader
-	// binding, which maps Stage to a wire string via stageName() at the pybind11 boundary).
-	// Called on whatever thread is running read() - the caller is responsible for getting it
-	// back to the Python/UI thread safely (e.g. via pybind11x::put_nowait's
-	// call_soon_threadsafe bridge), never call Python from here directly assuming the GIL is
-	// held.
-	using ProgressCallback = std::function<void(Stage stage, size_t current, size_t total)>;
+	using Stage = osgGLTF::Reader::Stage;
+	using ProgressCallback = osgGLTF::Reader::ProgressCallback;
 
 	struct TextureCache {
 		std::mutex mutex;
@@ -179,7 +153,8 @@ private:
 		);
 
 		if(ctx && ctx->progress && *ctx->progress) {
-			(*ctx->progress)(Stage::LoadingTextures, ++ctx->imagesLoaded, ctx->totalImages);
+			ctx->imagesLoaded++;
+			(*ctx->progress)(Stage::LoadingTextures, ctx->imagesLoaded, ctx->totalImages);
 		}
 
 		return ok;
@@ -432,7 +407,9 @@ public:
 			// node in the file, not just ones reachable from the active scene, so this
 			// is an upper-bound denominator (progress may not hit exactly 100% for a
 			// model with unreferenced nodes, which is rare and harmless for a bar).
-			if(progress) progress(Stage::BuildingNodes, ++nodesBuilt, model.nodes.size());
+			nodesBuilt++;
+
+			if(progress) progress(Stage::BuildingNodes, nodesBuilt, model.nodes.size());
 
 			osg::MatrixTransform* mt = new osg::MatrixTransform();
 

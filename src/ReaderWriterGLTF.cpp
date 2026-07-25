@@ -1,18 +1,11 @@
-// Pull in the single-header implementations exactly once.
-#define TINYGLTF_IMPLEMENTATION
-#define STB_IMAGE_IMPLEMENTATION
-#define STB_IMAGE_WRITE_IMPLEMENTATION
-#define TINYGLTF_NOEXCEPTION
-
-#include "tiny_gltf.h"
-#include "GLTFReader.hpp"
+#include <osgGLTF/Reader.hpp>
 
 #include <osgDB/FileNameUtils>
 #include <osgDB/Registry>
 
 class ReaderWriterGLTF: public osgDB::ReaderWriter {
 public:
-	mutable GLTFReader::TextureCache _cache;
+	mutable osgGLTF::Reader::TextureCache _cache;
 
 	ReaderWriterGLTF() {
 		supportsExtension("gltf", "glTF 2.0 ASCII");
@@ -36,7 +29,7 @@ public:
 
 		if(!acceptsExtension(ext)) return ReadResult::FILE_NOT_HANDLED;
 
-		GLTFReader reader;
+		osgGLTF::Reader reader;
 
 		reader.setTextureCache(&_cache);
 

@@ -2,6 +2,9 @@ cmake_minimum_required(VERSION 3.19)
 
 project(osgGLTF)
 
+include(CMakePackageConfigHelpers)
+include(GNUInstallDirs)
+
 if(CMAKE_SOURCE_DIR STREQUAL PROJECT_SOURCE_DIR)
 	set(OSGGLTF_IS_TOP_LEVEL ON)
 else()
@@ -96,13 +99,11 @@ if(OSGGLTF_BUILD_PYTHON)
 	target_include_directories(osgGLTF_python PRIVATE
 		"${OSG_PYTHON_DIR}"
 		"${OSG_PYTHON_DIR}/etc"
-		"${PROJECT_SOURCE_DIR}/src"
 		"${PROJECT_SOURCE_DIR}/ext/tinygltf"
-		${OPENSCENEGRAPH_INCLUDE_DIRS}
 	)
 	target_link_libraries(osgGLTF_python PRIVATE
+		osgGLTF::osgGLTF
 		pybind11::module
-		${OPENSCENEGRAPH_LIBRARIES}
 	)
 	target_compile_features(osgGLTF_python PUBLIC cxx_std_20)
 	# target_compile_options(osgGLTF_python PRIVATE ${SLUGHORN_COMPILE_OPTIONS})

@@ -1,10 +1,8 @@
 //vimrun! ./test.py
 
-#define TINYGLTF_IMPLEMENTATION
-#define STB_IMAGE_IMPLEMENTATION
-#define STB_IMAGE_WRITE_IMPLEMENTATION
 #define TINYGLTF_NOEXCEPTION
 
+#include "osgGLTF/Reader.hpp"
 #include "osgGLTF/Shader.hpp"
 #include "osgGLTF/SimplePlayer.hpp"
 
@@ -16,7 +14,6 @@
 #include "pybind11x.hpp"
 
 #include "tiny_gltf.h"
-#include "GLTFReader.hpp"
 
 #include <algorithm>
 #include <map>
@@ -586,14 +583,14 @@ std::string inspectGLTFJson(const std::string& path, bool loadImages, int indent
 	));
 }
 
-// Async glTF load: releases the GIL and calls GLTFReader directly (bypassing the generic
+// Async glTF load: releases the GIL and calls osgGLTF::Reader directly (bypassing the generic
 // osgDB::readNodeFile plugin dispatch, which has no hook for a progress callback), so a
 // caller can run this via asyncio.to_thread(...) while the viewer keeps rendering. Progress
 // (and the final node) are delivered through the same loop/queue call_soon_threadsafe bridge
 // as pyosg_async_task_example -- see pybind11x::put_nowait.
 //
-// Cancellation via `stop` is cooperative and can only take effect between GLTFReader's own
-// checkpoints (see GLTFReader::ProgressCallback) -- it cannot interrupt tinygltf's own file
+// Cancellation via `stop` is cooperative and can only take effect between osgGLTF::Reader's own
+// checkpoints (see osgGLTF::Reader::ProgressCallback) -- it cannot interrupt tinygltf's own file
 // parse/decode, which is a single opaque blocking call. If a stop was requested by the time
 // read() returns, the result is discarded (not attached to the scene) and "complete" is
 // delivered with None instead of the loaded node.
@@ -607,24 +604,33 @@ osg::ref_ptr<osg::Node> readNodeFileAsync(
 	py::gil_scoped_release release;
 
 	// Same texture-dedup cache ReaderWriterGLTF::readNode() wires up for the normal
-	// osgDB::readNodeFile() path (see its `mutable GLTFReader::TextureCache _cache`
-	// member). Without this, GLTFReader.hpp's three tc-checking call sites (occlusion/
-	// metallic-roughness bake, base color, normal map) all skip their cache lookup and
+	// osgDB::readNodeFile() path. Without this, the reader's three cache-checking call sites
+	// (occlusion/metallic-roughness bake, base color, normal map) all skip their cache lookup and
 	// silently reload+redecode any texture referenced by more than one material in the
 	// model -- measured 4.5x slower (13.5s vs 2.96s) on a real multi-material asset
 	// before this was added.
-	static GLTFReader::TextureCache s_asyncTextureCache;
+	static osgGLTF::Reader::TextureCache s_asyncTextureCache;
 
 	const std::string ext = osgDB::getLowerCaseFileExtension(location);
 	const bool isBinary = ext == "glb";
 
-	GLTFReader reader;
+	osgGLTF::Reader reader;
 
 	reader.setTextureCache(&s_asyncTextureCache);
 
-	GLTFReader::ProgressCallback onProgress = [&](GLTFReader::Stage stage, size_t current, size_t total) {
+	osgGLTF::Reader::ProgressCallback onProgress = [&](
+		osgGLTF::Reader::Stage stage,
+		size_t current,
+		size_t total
+	) {
 		pyx::put_nowait(
-			loop, queue, "progress", job_id, std::string(GLTFReader::stageName(stage)), current, total
+			loop,
+			queue,
+			"progress",
+			job_id,
+			std::string(osgGLTF::Reader::stageName(stage)),
+			current,
+			total
 		);
 	};
 
