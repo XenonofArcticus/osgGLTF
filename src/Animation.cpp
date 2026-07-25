@@ -336,7 +336,7 @@ void AnimationCallback::operator()(osg::Node* node, osg::NodeVisitor* nv) {
 		_restartRequested = false;
 		_playTime = 0.0;
 		_lastSimulationTime = simTime;
-		restoreBasePose();
+		_restoreBasePose();
 
 		GLTF_NOTIFY(1)
 			<< "playing animation '" << clip.name << "'"
@@ -363,9 +363,9 @@ void AnimationCallback::operator()(osg::Node* node, osg::NodeVisitor* nv) {
 
 		if(it == current.end()) continue;
 
-		if(channel.path == Path::Rotation) it->second.rotation = sampleQuat(channel, t);
+		if(channel.path == Path::Rotation) it->second.rotation = _sampleQuat(channel, t);
 		else {
-			osg::Vec3d v = sampleVec3(channel, t);
+			osg::Vec3d v = _sampleVec3(channel, t);
 
 			if(channel.path == Path::Translation) it->second.translation = v;
 			else if(channel.path == Path::Scale) it->second.scale = v;
@@ -389,7 +389,7 @@ void AnimationCallback::operator()(osg::Node* node, osg::NodeVisitor* nv) {
 	traverse(node, nv);
 }
 
-void AnimationCallback::restoreBasePose() {
+void AnimationCallback::_restoreBasePose() {
 	for(const Clip& clip : clips) {
 		for(const Channel& channel : clip.channels) {
 			auto it = baseTRS.find(channel.targetNode);
@@ -404,7 +404,7 @@ void AnimationCallback::restoreBasePose() {
 	}
 }
 
-std::size_t AnimationCallback::sampleIndex(
+std::size_t AnimationCallback::_sampleIndex(
 	const std::vector<float>& times,
 	double t,
 	double& mix
@@ -438,11 +438,11 @@ std::size_t AnimationCallback::sampleIndex(
 	return i0;
 }
 
-osg::Vec3d AnimationCallback::sampleVec3(const Channel& channel, double t) {
+osg::Vec3d AnimationCallback::_sampleVec3(const Channel& channel, double t) {
 	if(channel.vec3Values.empty()) return osg::Vec3d();
 
 	double mix = 0.0;
-	std::size_t i = sampleIndex(channel.times, t, mix);
+	std::size_t i = _sampleIndex(channel.times, t, mix);
 
 	if(channel.interpolation == "STEP" || i + 1 >= channel.vec3Values.size()) {
 		return channel.vec3Values[std::min(i, channel.vec3Values.size() - 1)];
@@ -454,11 +454,11 @@ osg::Vec3d AnimationCallback::sampleVec3(const Channel& channel, double t) {
 	return a * (1.0 - mix) + b * mix;
 }
 
-osg::Quat AnimationCallback::sampleQuat(const Channel& channel, double t) {
+osg::Quat AnimationCallback::_sampleQuat(const Channel& channel, double t) {
 	if(channel.quatValues.empty()) return osg::Quat();
 
 	double mix = 0.0;
-	std::size_t i = sampleIndex(channel.times, t, mix);
+	std::size_t i = _sampleIndex(channel.times, t, mix);
 
 	if(channel.interpolation == "STEP" || i + 1 >= channel.quatValues.size()) {
 		return channel.quatValues[std::min(i, channel.quatValues.size() - 1)];

@@ -16,13 +16,7 @@
 #include <osg/Node>
 #include <osg/Geometry>
 #include <osg/MatrixTransform>
-#include <osg/Texture2D>
 #include <osg/CullFace>
-#include <osg/BlendFunc>
-#include <osg/BufferIndexBinding>
-#include <osg/BufferObject>
-#include <osg/Depth>
-#include <osg/Math>
 
 #include <osgUtil/SmoothingVisitor>
 
@@ -34,16 +28,19 @@
 #include <osgGLTF/Reader.hpp>
 
 #include <algorithm>
-#include <cmath>
+#include <cstddef>
 #include <cstdlib>
 #include <map>
 #include <string>
+#include <typeinfo>
+#include <vector>
 
 // tiny_gltf.h is intentionally NOT included here - see file comment above.
 
 #include "Accessor.hpp"
 #include "Animation.hpp"
 #include "Log.hpp"
+#include "Material.hpp"
 #include "Skin.hpp"
 #include "Texture.hpp"
 
@@ -56,11 +53,11 @@ public:
 
 	struct Env {
 		Env(const std::string& loc, const osgDB::Options* opt):
-		referrer(loc),
-		readOptions(opt) {}
+		_referrer(loc),
+		_readOptions(opt) {}
 
-		std::string referrer;
-		const osgDB::Options* readOptions;
+		std::string _referrer;
+		const osgDB::Options* _readOptions;
 	};
 
 	mutable TextureCache* _texCache = nullptr;
@@ -81,17 +78,17 @@ public:
 private:
 	// Context threaded through tinygltf's C-function-pointer image loader via its
 	// void* user_pointer param (same pattern FsCallbacks.user_data already uses above).
-	// Not const-qualified since imagesLoaded is ticked from inside the callback.
+	// Not const-qualified since _imagesLoaded is ticked from inside the callback.
 	struct ImageLoadContext {
-		const ProgressCallback* progress;
-		size_t imagesLoaded = 0;
-		size_t totalImages = 0;
+		const ProgressCallback* _progress;
+		size_t _imagesLoaded = 0;
+		size_t _totalImages = 0;
 	};
 
 	// No-op image loader used only for the metadata-only pre-pass below - skips decode
 	// entirely, just lets tinygltf finish parsing the JSON model (including model.images,
 	// which is populated from the JSON regardless of whether pixels get decoded).
-	static bool skipImageLoad(
+	static bool _skipImageLoad(
 		tinygltf::Image*,
 		const int,
 		std::string*,
@@ -111,7 +108,7 @@ private:
 	// non-null user_data to LoadImageDataOption*, so forwarding our context there would read
 	// garbage. nullptr matches the behavior tinygltf uses by default when SetImageLoader() is
 	// never called at all, so this is not a behavior change vs. the old unhooked path.
-	static bool realImageLoader(
+	static bool _realImageLoader(
 		tinygltf::Image* image,
 		const int imageIdx,
 		std::string* err,
@@ -128,9 +125,9 @@ private:
 			image, imageIdx, err, warn, reqWidth, reqHeight, bytes, size, nullptr
 		);
 
-		if(ctx && ctx->progress && *ctx->progress) {
-			ctx->imagesLoaded++;
-			(*ctx->progress)(Stage::LoadingTextures, ctx->imagesLoaded, ctx->totalImages);
+		if(ctx && ctx->_progress && *ctx->_progress) {
+			ctx->_imagesLoaded++;
+			(*ctx->_progress)(Stage::LoadingTextures, ctx->_imagesLoaded, ctx->_totalImages);
 		}
 
 		return ok;
@@ -173,27 +170,27 @@ public:
 			std::string countErr, countWarn;
 
 			counter.SetFsCallbacks(fs);
-			counter.SetImageLoader(&skipImageLoad, nullptr);
+			counter.SetImageLoader(&_skipImageLoad, nullptr);
 
 			bool countOk = isBinary
 				? counter.LoadBinaryFromFile(&countModel, &countErr, &countWarn, location)
 				: counter.LoadASCIIFromFile (&countModel, &countErr, &countWarn, location)
 			;
 
-			imageLoadContext.totalImages = countOk ? countModel.images.size() : 0;
+			imageLoadContext._totalImages = countOk ? countModel.images.size() : 0;
 		}
 
 		if(progress) progress(Stage::Parsing, 1, 1);
 
-		imageLoadContext.progress = &progress;
-		imageLoadContext.imagesLoaded = 0;
+		imageLoadContext._progress = &progress;
+		imageLoadContext._imagesLoaded = 0;
 
-		if(progress) progress(Stage::LoadingTextures, 0, imageLoadContext.totalImages);
+		if(progress) progress(Stage::LoadingTextures, 0, imageLoadContext._totalImages);
 
-		loader.SetImageLoader(&realImageLoader, &imageLoadContext);
+		loader.SetImageLoader(&_realImageLoader, &imageLoadContext);
 
 		// tinygltf's own file/buffer decode is one opaque blocking call, but image decode
-		// (the real bottleneck for texture-heavy assets) is now hooked via realImageLoader
+	// (the real bottleneck for texture-heavy assets) is now hooked via _realImageLoader
 		// above, so LoadingTextures progress ticks in real time as each image finishes.
 		bool ok = isBinary
 			? loader.LoadBinaryFromFile(&model, &err, &warn, location)
@@ -306,8 +303,8 @@ public:
 
 		// glTF is Y-up; rotate to Z-up unless caller passes "gltfZUp"
 		bool zUp =
-			env.readOptions &&
-			env.readOptions->getOptionString().find("gltfZUp") != std::string::npos
+			env._readOptions &&
+			env._readOptions->getOptionString().find("gltfZUp") != std::string::npos
 		;
 
 		osg::MatrixTransform* root = new osg::MatrixTransform();
@@ -336,14 +333,15 @@ public:
 	}
 
 	struct NodeBuilder {
-		const tinygltf::Model& model;
-		const Env& env;
-		osgGLTF::detail::TextureLoader textureLoader;
-		ProgressCallback progress;
-		std::vector<osg::ref_ptr<osg::Array>> arrays;
-		std::vector<osg::ref_ptr<osgGLTF::detail::Skin>> skins;
-		mutable std::vector<osg::observer_ptr<osg::MatrixTransform>> nodeTransforms;
-		mutable size_t nodesBuilt = 0;
+		const tinygltf::Model& _model;
+		const Env& _env;
+		osgGLTF::detail::TextureLoader _textureLoader;
+		osgGLTF::detail::MaterialBuilder _materialBuilder;
+		ProgressCallback _progress;
+		std::vector<osg::ref_ptr<osg::Array>> _arrays;
+		std::vector<osg::ref_ptr<osgGLTF::detail::Skin>> _skins;
+		mutable std::vector<osg::observer_ptr<osg::MatrixTransform>> _nodeTransforms;
+		mutable size_t _nodesBuilt = 0;
 
 		NodeBuilder(
 			const GLTFReader* r,
@@ -351,21 +349,22 @@ public:
 			const Env& e,
 			const ProgressCallback& p=nullptr
 		):
-		model(m),
-		env(e),
-		textureLoader(m, e.referrer, e.readOptions, r->_texCache),
-		progress(p) {
-			nodeTransforms.resize(m.nodes.size());
+		_model(m),
+		_env(e),
+		_textureLoader(m, e._referrer, e._readOptions, r->_texCache),
+		_materialBuilder(m, e._referrer, e._readOptions, _textureLoader),
+		_progress(p) {
+			_nodeTransforms.resize(m.nodes.size());
 
-			arrays = osgGLTF::detail::extractArrays(model);
+			_arrays = osgGLTF::detail::extractArrays(_model);
 
-			skins = osgGLTF::detail::prepareSkins(model, arrays);
+			_skins = osgGLTF::detail::prepareSkins(_model, _arrays);
 		}
 
 		osg::Node* createNode(int nodeIdx, unsigned depth = 0) const {
-			if(nodeIdx < 0 || nodeIdx >= static_cast<int>(model.nodes.size())) return nullptr;
+			if(nodeIdx < 0 || nodeIdx >= static_cast<int>(_model.nodes.size())) return nullptr;
 
-			const tinygltf::Node& node = model.nodes[nodeIdx];
+			const tinygltf::Node& node = _model.nodes[nodeIdx];
 
 			GLTF_NOTIFY(depth)
 				<< "createNode '" << node.name << "'"
@@ -379,9 +378,9 @@ public:
 			// node in the file, not just ones reachable from the active scene, so this
 			// is an upper-bound denominator (progress may not hit exactly 100% for a
 			// model with unreferenced nodes, which is rare and harmless for a bar).
-			nodesBuilt++;
+			_nodesBuilt++;
 
-			if(progress) progress(Stage::BuildingNodes, nodesBuilt, model.nodes.size());
+			if(_progress) _progress(Stage::BuildingNodes, _nodesBuilt, _model.nodes.size());
 
 			osg::MatrixTransform* mt = new osg::MatrixTransform();
 
@@ -412,15 +411,15 @@ public:
 				mt->setMatrix(S * R * T);
 			}
 
-			nodeTransforms[nodeIdx] = mt;
+			_nodeTransforms[nodeIdx] = mt;
 
 			if(
 				node.skin >= 0 &&
-				node.skin < static_cast<int>(skins.size()) &&
-				skins[node.skin].valid()
-			) skins[node.skin]->skinnedNodes.push_back(mt);
+				node.skin < static_cast<int>(_skins.size()) &&
+				_skins[node.skin].valid()
+			) _skins[node.skin]->skinnedNodes.push_back(mt);
 
-			if(node.mesh >= 0) mt->addChild(makeMesh(model.meshes[node.mesh], node.skin));
+			if(node.mesh >= 0) mt->addChild(makeMesh(_model.meshes[node.mesh], node.skin));
 
 			for(int childIdx : node.children) {
 				if(osg::Node* c = createNode(childIdx, depth + 1)) mt->addChild(c);
@@ -432,23 +431,23 @@ public:
 		}
 
 		void resolveSkinJointNodes() {
-			osgGLTF::detail::resolveSkinJointNodes(model, nodeTransforms, skins);
+			osgGLTF::detail::resolveSkinJointNodes(_model, _nodeTransforms, _skins);
 		}
 
 		void installSkinPaletteCallbacks() {
-			osgGLTF::detail::installSkinPaletteCallbacks(skins);
+			osgGLTF::detail::installSkinPaletteCallbacks(_skins);
 		}
 
 		void installAnimationCallback(osg::Node* root) const {
 			const bool skipAnimation =
-				env.readOptions &&
-				env.readOptions->getOptionString().find("gltfSkipAnimation") != std::string::npos
+				_env._readOptions &&
+				_env._readOptions->getOptionString().find("gltfSkipAnimation") != std::string::npos
 			;
 
 			osgGLTF::detail::installAnimationCallback(
-				model,
-				arrays,
-				nodeTransforms,
+				_model,
+				_arrays,
+				_nodeTransforms,
 				root,
 				skipAnimation
 			);
@@ -495,8 +494,8 @@ public:
 				for(auto& [attrName, accessorIdx] : primitive.attributes) {
 					bool valid =
 						accessorIdx >= 0 &&
-						accessorIdx < static_cast<int>(arrays.size()) &&
-						arrays[accessorIdx].valid()
+						accessorIdx < static_cast<int>(_arrays.size()) &&
+						_arrays[accessorIdx].valid()
 					;
 
 					GLTF_NOTIFY(4)
@@ -507,21 +506,21 @@ public:
 
 					if(!valid) continue;
 
-					if(attrName == "POSITION") geom->setVertexArray(arrays[accessorIdx].get());
-					else if(attrName == "NORMAL") geom->setNormalArray(arrays[accessorIdx].get());
-					else if(attrName == "COLOR_0") geom->setColorArray(arrays[accessorIdx].get());
+					if(attrName == "POSITION") geom->setVertexArray(_arrays[accessorIdx].get());
+					else if(attrName == "NORMAL") geom->setNormalArray(_arrays[accessorIdx].get());
+					else if(attrName == "COLOR_0") geom->setColorArray(_arrays[accessorIdx].get());
 					else if(attrName == "TANGENT") {
-						arrays[accessorIdx]->setBinding(osg::Array::BIND_PER_VERTEX);
+						_arrays[accessorIdx]->setBinding(osg::Array::BIND_PER_VERTEX);
 
 						geom->setVertexAttribArray(
 							osgGLTF::shader::TANGENT_ATTRIBUTE,
-							arrays[accessorIdx].get()
+							_arrays[accessorIdx].get()
 						);
 					}
 					else if(attrName.rfind("TEXCOORD_", 0) == 0) {
 						int uvSet = std::atoi(attrName.c_str() + 9);
 
-						texCoordSets[uvSet] = arrays[accessorIdx].get();
+						texCoordSets[uvSet] = _arrays[accessorIdx].get();
 					}
 
 					else if(attrName == "JOINTS_0") jointsAccessor = accessorIdx;
@@ -535,21 +534,21 @@ public:
 						<< " WEIGHTS_0=" << weightsAccessor << std::endl
 					;
 
-					if(skinIdx >= 0 && skinIdx < static_cast<int>(skins.size())) {
+					if(skinIdx >= 0 && skinIdx < static_cast<int>(_skins.size())) {
 						if(jointsAccessor >= 0) {
-							arrays[jointsAccessor]->setBinding(osg::Array::BIND_PER_VERTEX);
-							arrays[jointsAccessor]->setPreserveDataType(true);
+							_arrays[jointsAccessor]->setBinding(osg::Array::BIND_PER_VERTEX);
+							_arrays[jointsAccessor]->setPreserveDataType(true);
 							geom->setVertexAttribArray(
 								osgGLTF::shader::JOINT_INDICES_ATTRIBUTE,
-								arrays[jointsAccessor].get()
+								_arrays[jointsAccessor].get()
 							);
 						}
 
 						if(weightsAccessor >= 0) {
-							arrays[weightsAccessor]->setBinding(osg::Array::BIND_PER_VERTEX);
+							_arrays[weightsAccessor]->setBinding(osg::Array::BIND_PER_VERTEX);
 							geom->setVertexAttribArray(
 								osgGLTF::shader::JOINT_WEIGHTS_ATTRIBUTE,
-								arrays[weightsAccessor].get()
+								_arrays[weightsAccessor].get()
 							);
 						}
 					}
@@ -564,11 +563,16 @@ public:
 
 				if(
 					primitive.material >= 0 &&
-					primitive.material < static_cast<int>(model.materials.size())
+					primitive.material < static_cast<int>(_model.materials.size())
 				) {
 					GLTF_NOTIFY(3) << "applyMaterial " << primitive.material << std::endl;
 
-					applyMaterial(primitive.material, baseColorFactor, geom.get(), texCoordSets);
+					_materialBuilder.applyMaterial(
+						primitive.material,
+						baseColorFactor,
+						geom,
+						texCoordSets
+					);
 				}
 
 				// fall-back solid color if no COLOR_0
@@ -585,15 +589,15 @@ public:
 				// index primitive set - handles uint8, uint16, uint32
 				if(
 					primitive.indices >= 0 &&
-					primitive.indices < static_cast<int>(arrays.size()) &&
-					arrays[primitive.indices].valid()
+					primitive.indices < static_cast<int>(_arrays.size()) &&
+					_arrays[primitive.indices].valid()
 				) {
 					int glMode = primitiveMode(primitive.mode);
-					const tinygltf::Accessor& idxAcc = model.accessors[primitive.indices];
+					const tinygltf::Accessor& idxAcc = _model.accessors[primitive.indices];
 
 					switch(idxAcc.componentType) {
 						case TINYGLTF_COMPONENT_TYPE_UNSIGNED_BYTE: {
-							auto* src = static_cast<osg::UByteArray*>(arrays[primitive.indices].get());
+							auto* src = static_cast<osg::UByteArray*>(_arrays[primitive.indices].get());
 							auto* de = new osg::DrawElementsUByte(glMode, idxAcc.count);
 
 							std::copy(src->begin(), src->end(), de->begin());
@@ -604,7 +608,7 @@ public:
 						}
 
 						case TINYGLTF_COMPONENT_TYPE_UNSIGNED_SHORT: {
-							auto* src = static_cast<osg::UShortArray*>(arrays[primitive.indices].get());
+							auto* src = static_cast<osg::UShortArray*>(_arrays[primitive.indices].get());
 
 							geom->addPrimitiveSet(new osg::DrawElementsUShort(glMode, src->begin(), src->end()));
 
@@ -612,7 +616,7 @@ public:
 						}
 
 						case TINYGLTF_COMPONENT_TYPE_UNSIGNED_INT: {
-							auto* src = static_cast<osg::UIntArray*>(arrays[primitive.indices].get());
+							auto* src = static_cast<osg::UIntArray*>(_arrays[primitive.indices].get());
 
 							geom->addPrimitiveSet( new osg::DrawElementsUInt(glMode, src->begin(), src->end()));
 
@@ -647,8 +651,8 @@ public:
 				);
 
 				bool skipNormals =
-					env.readOptions &&
-					env.readOptions->getOptionString().find("gltfSkipNormals") != std::string::npos
+					_env._readOptions &&
+					_env._readOptions->getOptionString().find("gltfSkipNormals") != std::string::npos
 				;
 
 				osg::Geode* geode = new osg::Geode();
@@ -671,707 +675,6 @@ public:
 			}
 
 			return group;
-		}
-
-		// ---- material ------------------------------------------------ //
-		// Fixed-function multitexturing ties "which GL texture unit" to "which
-		// TexCoordArray is bound to that unit" - so each texture channel gets a
-		// fixed unit (base/diffuse=0, normal=1, MR/specGloss=2, emissive=3), but
-		// the UV data bound to that unit must match what the texture actually
-		// requests via textureInfo.texCoord, not just whatever happened to be
-		// parsed as TEXCOORD_0/1.
-		void applyMaterial(
-			int matIdx,
-			osg::Vec4& baseColorFactor,
-			osg::Geometry* geom,
-			const std::map<int, osg::Array*>& texCoordSets
-		) const {
-			const tinygltf::Material& mat = model.materials[matIdx];
-			const auto& pbr = mat.pbrMetallicRoughness;
-
-			// sRGB: per the glTF spec, baseColor/diffuse and emissive textures
-			// are authored in sRGB gamma space; normal and ORM (occlusion/
-			// roughness/metallic) textures are linear data, not color, and
-			// must never be gamma-decoded.
-			auto bindTexture = [&](int unit, int texIdx, int texCoord, bool sRGB) {
-				osg::Texture2D* tex = textureLoader.getOrCreateTexture(texIdx, sRGB);
-
-				if(!tex) return;
-
-				geom->getOrCreateStateSet()->setTextureAttributeAndModes(unit, tex);
-
-				auto it = texCoordSets.find(texCoord);
-
-				if(it != texCoordSets.end()) geom->setTexCoordArray(unit, it->second);
-			};
-
-			if(pbr.baseColorFactor.size() == 4) baseColorFactor.set(
-				pbr.baseColorFactor[0],
-				pbr.baseColorFactor[1],
-				pbr.baseColorFactor[2],
-				pbr.baseColorFactor[3]
-			);
-
-			bool haveCoreBaseColor = pbr.baseColorTexture.index >= 0;
-
-			if(haveCoreBaseColor) bindTexture(
-				osgGLTF::shader::BASE_COLOR_TEXTURE_UNIT,
-				pbr.baseColorTexture.index,
-				pbr.baseColorTexture.texCoord,
-				true
-			);
-
-			bool haveNormalMap = mat.normalTexture.index >= 0;
-
-			if(haveNormalMap) bindTexture(
-				osgGLTF::shader::NORMAL_TEXTURE_UNIT,
-				mat.normalTexture.index,
-				mat.normalTexture.texCoord,
-				false
-			);
-
-			// metallicRoughnessTexture and occlusionTexture are often the same
-			// image (R=occlusion, G=roughness, B=metallic) - when they share
-			// the same texture index, the plain bind below already carries
-			// correct AO in R. When occlusionTexture is a genuinely separate
-			// image (e.g. SciFiHelmet), bake the two together so real
-			// per-pixel AO isn't silently dropped - downstream shaders
-			// (09-ibl.py) gate their AO read on the hasOcclusion uniform
-			// (exported below) rather than trusting an "unused" R channel
-			// when no occlusionTexture is present at all.
-			bool haveOcclusion = mat.occlusionTexture.index >= 0;
-			bool sameOcclusionImage =
-				haveOcclusion &&
-				mat.occlusionTexture.index == pbr.metallicRoughnessTexture.index
-			;
-			bool haveMetallicRoughnessMap = pbr.metallicRoughnessTexture.index >= 0;
-
-			if(haveOcclusion && !sameOcclusionImage) {
-				std::string bakeKey = env.referrer + "|orm-occlusion|" + std::to_string(matIdx);
-				osg::ref_ptr<osg::Texture2D> ormTex = textureLoader.findCached(bakeKey);
-
-				if(!ormTex.valid()) {
-					osg::ref_ptr<osg::Image> occImg =
-						textureLoader.loadRawImage(mat.occlusionTexture.index);
-					osg::ref_ptr<osg::Image> mrImg =
-						textureLoader.loadRawImage(pbr.metallicRoughnessTexture.index);
-
-					if(mat.occlusionTexture.texCoord != pbr.metallicRoughnessTexture.texCoord) {
-						GLTF_NOTIFY(3)
-							<< "material " << matIdx
-							<< ": occlusionTexture and metallicRoughnessTexture use"
-							<< " different UV sets - occlusion bake assumes they"
-							<< " share the same UV space; result may be UV-mismatched" << std::endl
-						;
-					}
-
-					osg::ref_ptr<osg::Image> bakedOrm;
-
-					bakeOcclusionIntoOrm(
-						occImg.get(),
-						static_cast<float>(mat.occlusionTexture.strength),
-						mrImg.get(),
-						bakedOrm
-					);
-
-					int samplerIdx = -1;
-
-					if(
-						pbr.metallicRoughnessTexture.index >= 0 &&
-						pbr.metallicRoughnessTexture.index < static_cast<int>(model.textures.size())
-					) samplerIdx = model.textures[pbr.metallicRoughnessTexture.index].sampler;
-
-					else if(mat.occlusionTexture.index < static_cast<int>(model.textures.size()))
-						samplerIdx = model.textures[mat.occlusionTexture.index].sampler;
-
-					ormTex = new osg::Texture2D(bakedOrm.get());
-
-					textureLoader.applyFormatAndSampler(ormTex, bakedOrm, false, samplerIdx);
-
-					ormTex->setUnRefImageDataAfterApply(true);
-
-					textureLoader.cache(bakeKey, ormTex);
-				}
-
-				geom->getOrCreateStateSet()->setTextureAttributeAndModes(
-					osgGLTF::shader::ORM_TEXTURE_UNIT,
-					ormTex.get()
-				);
-
-				auto occTexCoordIt = texCoordSets.find(mat.occlusionTexture.texCoord);
-
-				if(occTexCoordIt != texCoordSets.end()) geom->setTexCoordArray(
-					osgGLTF::shader::ORM_TEXTURE_UNIT,
-					occTexCoordIt->second
-				);
-			}
-
-			else if(pbr.metallicRoughnessTexture.index >= 0) bindTexture(
-				osgGLTF::shader::ORM_TEXTURE_UNIT,
-				pbr.metallicRoughnessTexture.index,
-				pbr.metallicRoughnessTexture.texCoord,
-				false
-			);
-
-			if(mat.emissiveTexture.index >= 0) bindTexture(
-				osgGLTF::shader::EMISSIVE_TEXTURE_UNIT,
-				mat.emissiveTexture.index,
-				mat.emissiveTexture.texCoord,
-				true
-			);
-
-			// KHR_materials_pbrSpecularGlossiness - legacy but still valid,
-			// real Sketchfab-era content uses it, sometimes extension-only
-			// with no core pbrMetallicRoughness fallback. Converted to the
-			// core metallic-roughness workflow at load time (see
-			// bakeSpecGlossToMetalRough) rather than binding
-			// specularGlossinessTexture straight into the ORM slot - that
-			// texture's channels (RGB=specular color/F0, A=glossiness) don't
-			// mean the same thing as ORM's (R=AO, G=roughness, B=metallic),
-			// so a direct bind previously fed the shader's Cook-Torrance path
-			// garbage roughness/metallic values.
-			if(!haveCoreBaseColor) {
-				auto extIt = mat.extensions.find("KHR_materials_pbrSpecularGlossiness");
-
-				if(extIt != mat.extensions.end()) {
-					const tinygltf::Value& sg = extIt->second;
-
-					osg::Vec4 diffuseFactor(1, 1, 1, 1);
-
-					if(sg.Has("diffuseFactor")) {
-						const tinygltf::Value& df = sg.Get("diffuseFactor");
-
-						if(df.IsArray() && df.ArrayLen() == 4) diffuseFactor.set(
-							static_cast<float>(df.Get(0).GetNumberAsDouble()),
-							static_cast<float>(df.Get(1).GetNumberAsDouble()),
-							static_cast<float>(df.Get(2).GetNumberAsDouble()),
-							static_cast<float>(df.Get(3).GetNumberAsDouble())
-						);
-					}
-
-					baseColorFactor = diffuseFactor;
-
-					osg::Vec3 specularFactor(1, 1, 1);
-
-					if(sg.Has("specularFactor")) {
-						const tinygltf::Value& sf = sg.Get("specularFactor");
-
-						if(sf.IsArray() && sf.ArrayLen() == 3) specularFactor.set(
-							static_cast<float>(sf.Get(0).GetNumberAsDouble()),
-							static_cast<float>(sf.Get(1).GetNumberAsDouble()),
-							static_cast<float>(sf.Get(2).GetNumberAsDouble())
-						);
-					}
-
-					float glossinessFactor = 1.0f;
-
-					if(sg.Has("glossinessFactor"))
-						glossinessFactor = static_cast<float>(sg.Get("glossinessFactor").GetNumberAsDouble());
-
-					int diffuseIdx = -1, diffuseTexCoord = 0;
-
-					if(sg.Has("diffuseTexture")) {
-						const tinygltf::Value& dt = sg.Get("diffuseTexture");
-
-						diffuseIdx = dt.Has("index") ? dt.Get("index").GetNumberAsInt()	: -1;
-						diffuseTexCoord = dt.Has("texCoord") ? dt.Get("texCoord").GetNumberAsInt() : 0;
-					}
-
-					int specGlossIdx = -1, specGlossTexCoord = 0;
-
-					if(sg.Has("specularGlossinessTexture")) {
-						const tinygltf::Value& sgt = sg.Get("specularGlossinessTexture");
-
-						specGlossIdx = sgt.Has("index") ? sgt.Get("index").GetNumberAsInt() : -1;
-						specGlossTexCoord = sgt.Has("texCoord") ? sgt.Get("texCoord").GetNumberAsInt() : 0;
-					}
-
-					// gltfSkipSpecGlossBake opts out of the metal-rough bake
-					// below and falls back to a raw pass-through of
-					// diffuseTexture/specularGlossinessTexture, for callers
-					// that implement their own spec-gloss BRDF shader branch
-					// (Sketchfab's own viewer takes this approach - its
-					// Model Inspector panel lists Albedo/Specular/Glossiness
-					// as native channels, not a converted metallic-roughness
-					// pair) and would rather skip the bake's load-time cost
-					// and lossy conversion entirely.
-					bool skipSpecGlossBake =
-						env.readOptions &&
-						env.readOptions->getOptionString().find("gltfSkipSpecGlossBake") != std::string::npos
-					;
-
-					if(skipSpecGlossBake) {
-						if(diffuseIdx >= 0) bindTexture(
-							osgGLTF::shader::BASE_COLOR_TEXTURE_UNIT,
-							diffuseIdx,
-							diffuseTexCoord,
-							true
-						);
-						if(specGlossIdx >= 0) bindTexture(
-							osgGLTF::shader::ORM_TEXTURE_UNIT,
-							specGlossIdx,
-							specGlossTexCoord,
-							true
-						);
-					}
-
-					else {
-						// Every primitive that references this material would
-						// otherwise redo the full per-pixel bake from
-						// scratch - for a mesh whose parts all share one
-						// material (the common case), that's an N-way
-						// redundant multi-second cost for identical output.
-						// Cache by referrer+matIdx, same TextureCache the
-						// texIdx-keyed path already uses.
-						std::string bakeKey = env.referrer + "|specgloss|" + std::to_string(matIdx);
-						osg::ref_ptr<osg::Texture2D> bcTex =
-							textureLoader.findCached(bakeKey + "|bc");
-						osg::ref_ptr<osg::Texture2D> ormTex =
-							textureLoader.findCached(bakeKey + "|orm");
-
-						if(!bcTex.valid() || !ormTex.valid()) {
-							// The bake combines diffuse and specGloss pixel-
-							// for-pixel, which only makes sense if both
-							// textures share the same UV layout. texCoord
-							// index alone doesn't prove that, but it's the
-							// cheapest signal we have without comparing UV
-							// accessor data - warn instead of silently
-							// mis-rendering.
-							if(
-								diffuseIdx >= 0 &&
-								specGlossIdx >= 0 &&
-								diffuseTexCoord != specGlossTexCoord
-							) {
-								GLTF_NOTIFY(3)
-									<< "material " << matIdx
-									<< ": diffuseTexture and specularGlossinessTexture use"
-									" different UV sets (" << diffuseTexCoord << " vs "
-									<< specGlossTexCoord << ") - spec-gloss bake assumes they"
-									" share the same UV space; result may be UV-mismatched"
-									<< std::endl
-								;
-							}
-
-							osg::ref_ptr<osg::Image> diffuseImg =
-								textureLoader.loadRawImage(diffuseIdx);
-							osg::ref_ptr<osg::Image> specGlossImg =
-								textureLoader.loadRawImage(specGlossIdx);
-							osg::ref_ptr<osg::Image> bakedBaseColor, bakedOrm;
-
-							// Hint for next time someone sees a multi-second stall between
-							// "building nodes" ticks: this CPU per-pixel bake (single-threaded,
-							// no SIMD) is the culprit, not I/O or a hang. Cost scales with the
-							// larger of diffuseImg/specGlossImg - a 2048x2048 pair alone runs
-							// ~2s. TODO: row-parallelize (std::thread/OpenMP) once this becomes
-							// a real bottleneck for more assets.
-							GLTF_NOTIFY(3)
-								<< "material " << matIdx << ": baking specGloss -> metal-rough ("
-								<< (diffuseImg.valid() ? diffuseImg->s() : 0) << "x"
-								<< (diffuseImg.valid() ? diffuseImg->t() : 0) << " diffuse, "
-								<< (specGlossImg.valid() ? specGlossImg->s() : 0) << "x"
-								<< (specGlossImg.valid() ? specGlossImg->t() : 0) << " specGloss)"
-								" - single-threaded CPU bake, may take a moment" << std::endl
-							;
-
-							bakeSpecGlossToMetalRough(
-								diffuseImg.get(),
-								diffuseFactor,
-								specGlossImg.get(),
-								specularFactor,
-								glossinessFactor,
-								bakedBaseColor,
-								bakedOrm
-							);
-
-							int samplerIdx = -1;
-
-							if(diffuseIdx >= 0 && diffuseIdx < static_cast<int>(model.textures.size()))
-								samplerIdx = model.textures[diffuseIdx].sampler;
-
-							else if(specGlossIdx >= 0 && specGlossIdx < static_cast<int>(model.textures.size()))
-								samplerIdx = model.textures[specGlossIdx].sampler;
-
-							// Baked images are already linear (converted, not
-							// merely re-encoded), so bind them with
-							// sRGB=false - GPU sRGB decode must not run twice.
-							bcTex = new osg::Texture2D(bakedBaseColor.get());
-
-							textureLoader.applyFormatAndSampler(
-								bcTex,
-								bakedBaseColor,
-								false,
-								samplerIdx
-							);
-							bcTex->setUnRefImageDataAfterApply(true);
-
-							ormTex = new osg::Texture2D(bakedOrm.get());
-
-							textureLoader.applyFormatAndSampler(
-								ormTex,
-								bakedOrm,
-								false,
-								samplerIdx
-							);
-							ormTex->setUnRefImageDataAfterApply(true);
-
-							textureLoader.cache(bakeKey + "|bc", bcTex);
-							textureLoader.cache(bakeKey + "|orm", ormTex);
-						}
-
-						geom->getOrCreateStateSet()->setTextureAttributeAndModes(
-							osgGLTF::shader::BASE_COLOR_TEXTURE_UNIT,
-							bcTex.get()
-						);
-						geom->getOrCreateStateSet()->setTextureAttributeAndModes(
-							osgGLTF::shader::ORM_TEXTURE_UNIT,
-							ormTex.get()
-						);
-
-						// The bake always produces a real (at-least-1x1) baseColor
-						// + ORM texture even for factor-only spec-gloss materials
-						// - see bakeSpecGlossToMetalRough's comment -- so both
-						// slots are genuinely populated from here on, regardless
-						// of what the core pbrMetallicRoughness JSON block did or
-						// didn't declare.
-						haveCoreBaseColor = true;
-						haveMetallicRoughnessMap = true;
-
-						int bakeTexCoord = (diffuseIdx >= 0) ? diffuseTexCoord : specGlossTexCoord;
-						auto texCoordIt = texCoordSets.find(bakeTexCoord);
-
-						if(texCoordIt != texCoordSets.end()) {
-							geom->setTexCoordArray(
-								osgGLTF::shader::BASE_COLOR_TEXTURE_UNIT,
-								texCoordIt->second
-							);
-							geom->setTexCoordArray(
-								osgGLTF::shader::ORM_TEXTURE_UNIT,
-								texCoordIt->second
-							);
-						}
-
-						// metallicFactor/roughnessFactor uniforms (added
-						// below) default to 1.0 for extension-only materials
-						// - tinygltf always populates pbrMetallicRoughness
-						// with spec defaults even without a core JSON block
-						// present, so the baked-in per-pixel metallic/
-						// roughness above won't get double-multiplied.
-					}
-				}
-			}
-
-			// Export the material as a single osgGLTF_Material UBO for downstream PBR shaders
-			// (e.g. pyosg-lighting/09-ibl.py) instead of one osg::Uniform per field - this is
-			// this plugin's own extension to the material interface, not part of OSG's osg_*
-			// built-in uniform set, so it's namespaced (block name + binding) to avoid colliding
-			// with an unrelated shader's own material uniforms.
-			//
-			// std140 layout (must match the GLSL `layout(std140, binding = N) uniform
-			// osgGLTF_Material { ... }` block exactly - see 09-ibl.py):
-			//
-			// vec4 baseColorFactor offset 0 (16 bytes)
-			// float roughnessFactor offset 16
-			// float metallicFactor offset 20
-			// float hasBaseColorMap offset 24
-			// float hasMetallicRoughnessMap offset 28
-			// float hasOcclusion offset 32
-			// float hasNormalMap offset 36
-			// (2 floats padding to round the block up to a multiple of 16) offset 40, 44
-			//
-			// haveOcclusion/haveMetallicRoughnessMap/haveCoreBaseColor/haveNormalMap are gates so
-			// a factor-only material (no texture at all - e.g. Fox's roughnessFactor=0.58 with
-			// no metallicRoughnessTexture) doesn't get its authored factor silently discarded by
-			// an unconditional texture() read of an unbound unit.
-			osg::ref_ptr<osg::FloatArray> materialData = new osg::FloatArray(12);
-
-			(*materialData)[0] = baseColorFactor.x();
-			(*materialData)[1] = baseColorFactor.y();
-			(*materialData)[2] = baseColorFactor.z();
-			(*materialData)[3] = baseColorFactor.w();
-			(*materialData)[4] = static_cast<float>(pbr.roughnessFactor);
-			(*materialData)[5] = static_cast<float>(pbr.metallicFactor);
-			(*materialData)[6] = haveCoreBaseColor ? 1.0f : 0.0f;
-			(*materialData)[7] = haveMetallicRoughnessMap ? 1.0f : 0.0f;
-			(*materialData)[8] = haveOcclusion ? 1.0f : 0.0f;
-			(*materialData)[9] = haveNormalMap ? 1.0f : 0.0f;
-			(*materialData)[10] = 0.0f;
-			(*materialData)[11] = 0.0f;
-
-			materialData->setBufferObject(new osg::UniformBufferObject());
-
-			geom->getOrCreateStateSet()->setAttributeAndModes(
-				new osg::UniformBufferBinding(
-					osgGLTF::shader::MATERIAL_UBO_BINDING,
-					materialData.get(),
-					0,
-					static_cast<GLsizeiptr>(materialData->getTotalDataSize())
-				),
-				osg::StateAttribute::ON
-			);
-
-
-			// Alpha coverage is a core glTF material property, but osgGLTF deliberately
-			// does not impose a particular PBR shader. Export its values as namespaced
-			// uniforms so downstream shaders can apply the required fragment discard
-			// (MASK) or write the source alpha (BLEND). alphaMode is encoded as:
-			// 0 = OPAQUE, 1 = MASK, 2 = BLEND. The glTF default alphaCutoff is 0.5.
-			float alphaMode = osgGLTF::shader::ALPHA_MODE_OPAQUE;
-			if(mat.alphaMode == "MASK") alphaMode = osgGLTF::shader::ALPHA_MODE_MASK;
-			else if(mat.alphaMode == "BLEND") alphaMode = osgGLTF::shader::ALPHA_MODE_BLEND;
-
-			auto* stateSet = geom->getOrCreateStateSet();
-			stateSet->addUniform(new osg::Uniform(
-				osgGLTF::shader::ALPHA_MODE_UNIFORM,
-				alphaMode
-			));
-			stateSet->addUniform(new osg::Uniform(
-				osgGLTF::shader::ALPHA_CUTOFF_UNIFORM,
-				static_cast<float>(mat.alphaCutoff)
-			));
-
-			if(mat.alphaMode == "BLEND") {
-				// glTF BLEND uses conventional non-premultiplied source-over alpha.
-				// Render it after opaque geometry and leave depth testing enabled while
-				// preventing a transparent surface from occluding later transparent draws.
-				stateSet->setMode(GL_BLEND, osg::StateAttribute::ON);
-				stateSet->setAttributeAndModes(
-					new osg::BlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA),
-					osg::StateAttribute::ON
-				);
-				stateSet->setAttributeAndModes(
-					new osg::Depth(osg::Depth::LEQUAL, 0.0, 1.0, false),
-					osg::StateAttribute::ON
-				);
-				stateSet->setRenderingHint(osg::StateSet::TRANSPARENT_BIN);
-			}
-
-			// Per the glTF spec, doubleSided disables backface culling for THIS
-			// material specifically (thin single-sided sheets like capes/cloth/leaves
-			// with no back geometry, meant to be visible and lit from both sides).
-			// readTopNode() enables GL_CULL_FACE unconditionally at the root; this
-			// per-geometry override on the child StateSet takes precedence over that
-			// ancestor mode (no OVERRIDE flag was used at the root, so normal OSG
-			// StateSet inheritance already lets a more-specific child win). The
-			// matching back-face normal flip belongs in whatever fragment shader
-			// consumes this geometry (gl_FrontFacing-based) -- not this loader's
-			// concern, since osgGLTF doesn't ship its own PBR shader.
-			if(mat.doubleSided) {
-				geom->getOrCreateStateSet()->setMode(GL_CULL_FACE, osg::StateAttribute::OFF);
-			}
-		}
-
-		// KHR_materials_pbrSpecularGlossiness is legacy, but real Sketchfab-era content still uses
-		// it, sometimes extension-only with no core pbrMetallicRoughness fallback. Rather than give
-		// a shader a second BRDF path to maintain, convert to the core metallic-roughness workflow
-		// at load time using the standard reference formula from the (archived) extension spec /
-		// glTF-Sample-Viewer / three.js - the same approach those engines use when they don't
-		// carry a native spec-gloss BRDF. Must be per-pixel, not per-factor: real content (e.g.
-		// Sketchfab's "Dead Space" suit) carries per-part variation in the specular/glossiness
-		// texture, not just flat material factors.
-		static float srgbToLinear(float c) {
-			return (c <= 0.04045f) ? (c / 12.92f) : std::pow((c + 0.055f) / 1.055f, 2.4f);
-		}
-
-		static float solveMetallic(float diffuse, float specular, float oneMinusSpecularStrength) {
-			const float dielectricSpecular = 0.04f;
-
-			if(specular < dielectricSpecular) return 0.0f;
-
-			float a = dielectricSpecular;
-			float b = diffuse * oneMinusSpecularStrength / (1.0f - dielectricSpecular) + specular - 2.0f * dielectricSpecular;
-			float c = dielectricSpecular - specular;
-			float D = b * b - 4.0f * a * c;
-
-			if(D < 0.0f) return 0.0f;
-
-			return osg::clampBetween((-b + std::sqrt(D)) / (2.0f * a), 0.0f, 1.0f);
-		}
-
-		// Bakes new baseColor (linear, for unit 0) + ORM-style (unit 2:
-		// R=AO placeholder - spec-gloss has no occlusion channel, G=roughness,
-		// B=metallic) images. Either source image may be null (factor-only
-		// material); output is always at least 1x1 so callers can bind
-		// unconditionally.
-		void bakeSpecGlossToMetalRough(
-			osg::Image* diffuseImg,
-			const osg::Vec4& diffuseFactor,
-			osg::Image* specGlossImg,
-			const osg::Vec3& specularFactor,
-			float glossinessFactor,
-			osg::ref_ptr<osg::Image>& outBaseColor,
-			osg::ref_ptr<osg::Image>& outOrm
-		) const {
-			const float epsilon = 1e-6f;
-			const float dielectricSpecular = 0.04f;
-
-			int w = 1, h = 1;
-
-			if(diffuseImg) { w = std::max(w, diffuseImg->s()); h = std::max(h, diffuseImg->t()); }
-			if(specGlossImg) { w = std::max(w, specGlossImg->s()); h = std::max(h, specGlossImg->t()); }
-
-			osg::ref_ptr<osg::Image> diffuseR = diffuseImg;
-
-			if(diffuseImg && (diffuseImg->s() != w || diffuseImg->t() != h)) {
-				diffuseR = new osg::Image(*diffuseImg);
-
-				diffuseR->scaleImage(w, h, 1);
-			}
-
-			osg::ref_ptr<osg::Image> specGlossR = specGlossImg;
-
-			if(specGlossImg && (specGlossImg->s() != w || specGlossImg->t() != h)) {
-				specGlossR = new osg::Image(*specGlossImg);
-
-				specGlossR->scaleImage(w, h, 1);
-			}
-
-			auto* baseColorData = new unsigned char[static_cast<size_t>(w) * h * 4];
-			auto* ormData = new unsigned char[static_cast<size_t>(w) * h * 3];
-
-			for(int y = 0; y < h; y++) {
-				for(int x = 0; x < w; x++) {
-					osg::Vec4 dTex = diffuseR ? diffuseR->getColor(x, y) : osg::Vec4(1, 1, 1, 1);
-					osg::Vec4 sgTex = specGlossR ? specGlossR->getColor(x, y) : osg::Vec4(1, 1, 1, 1);
-
-					// diffuse.rgb and specular.rgb are sRGB-encoded color;
-					// glossiness (specGloss alpha) and the factors are linear.
-					float dR = srgbToLinear(dTex.x()) * diffuseFactor.x();
-					float dG = srgbToLinear(dTex.y()) * diffuseFactor.y();
-					float dB = srgbToLinear(dTex.z()) * diffuseFactor.z();
-					float sR = srgbToLinear(sgTex.x()) * specularFactor.x();
-					float sG = srgbToLinear(sgTex.y()) * specularFactor.y();
-					float sB = srgbToLinear(sgTex.z()) * specularFactor.z();
-					float glossiness = sgTex.w() * glossinessFactor;
-
-					float specularStrength = std::max(sR, std::max(sG, sB));
-					float oneMinusSpecularStrength = 1.0f - specularStrength;
-					float maxDiffuse = std::max(dR, std::max(dG, dB));
-					float metallic = solveMetallic(maxDiffuse, specularStrength, oneMinusSpecularStrength);
-
-					float invOneMinusMetallic = 1.0f / std::max(1.0f - metallic, epsilon);
-					float invMetallic = 1.0f / std::max(metallic, epsilon);
-					float diffuseScale = oneMinusSpecularStrength / (1.0f - dielectricSpecular);
-
-					float bcFromDiffuseR = dR * diffuseScale * invOneMinusMetallic;
-					float bcFromDiffuseG = dG * diffuseScale * invOneMinusMetallic;
-					float bcFromDiffuseB = dB * diffuseScale * invOneMinusMetallic;
-
-					float bcFromSpecR = (sR - dielectricSpecular * (1.0f - metallic)) * invMetallic;
-					float bcFromSpecG = (sG - dielectricSpecular * (1.0f - metallic)) * invMetallic;
-					float bcFromSpecB = (sB - dielectricSpecular * (1.0f - metallic)) * invMetallic;
-
-					float t = metallic * metallic;
-					float baseR = osg::clampBetween(bcFromDiffuseR * (1.0f - t) + bcFromSpecR * t, 0.0f, 1.0f);
-					float baseG = osg::clampBetween(bcFromDiffuseG * (1.0f - t) + bcFromSpecG * t, 0.0f, 1.0f);
-					float baseB = osg::clampBetween(bcFromDiffuseB * (1.0f - t) + bcFromSpecB * t, 0.0f, 1.0f);
-					float roughness = osg::clampBetween(1.0f - glossiness, 0.0f, 1.0f);
-
-					size_t bi = (static_cast<size_t>(y) * w + x) * 4;
-					baseColorData[bi + 0] = static_cast<unsigned char>(baseR * 255.0f + 0.5f);
-					baseColorData[bi + 1] = static_cast<unsigned char>(baseG * 255.0f + 0.5f);
-					baseColorData[bi + 2] = static_cast<unsigned char>(baseB * 255.0f + 0.5f);
-					baseColorData[bi + 3] = static_cast<unsigned char>(dTex.w() * diffuseFactor.w() * 255.0f + 0.5f);
-
-					size_t oi = (static_cast<size_t>(y) * w + x) * 3;
-					ormData[oi + 0] = 255; // AO: spec-gloss carries no occlusion channel
-					ormData[oi + 1] = static_cast<unsigned char>(roughness * 255.0f + 0.5f);
-					ormData[oi + 2] = static_cast<unsigned char>(metallic * 255.0f + 0.5f);
-				}
-			}
-
-			outBaseColor = new osg::Image();
-			outBaseColor->setImage(
-				w,
-				h,
-				1,
-				GL_RGBA8,
-				GL_RGBA,
-				GL_UNSIGNED_BYTE,
-				baseColorData,
-				osg::Image::USE_NEW_DELETE
-			);
-
-			outOrm = new osg::Image();
-			outOrm->setImage(
-				w,
-				h,
-				1,
-				GL_RGB8,
-				GL_RGB,
-				GL_UNSIGNED_BYTE,
-				ormData,
-				osg::Image::USE_NEW_DELETE
-			);
-		}
-
-		// ---- separate occlusionTexture merge --------------------------- //
-		// Only needed when occlusionTexture is a genuinely distinct image
-		// from metallicRoughnessTexture (e.g. SciFiHelmet) - the common
-		// "packed ORM" convention (same texture index for both) already
-		// carries correct AO in R via the plain metallicRoughnessTexture
-		// bind and never reaches this function. `strength` is baked in
-		// directly per the spec formula (occludedColor = lerp(1, r,
-		// strength)) so no extra uniform is needed downstream.
-		void bakeOcclusionIntoOrm(
-			osg::Image* occlusionImg,
-			float strength,
-			osg::Image* metalRoughImg,
-			osg::ref_ptr<osg::Image>& outOrm
-		) const {
-			int w = 1, h = 1;
-
-			if(occlusionImg) {
-				w = std::max(w, occlusionImg->s());
-				h = std::max(h, occlusionImg->t());
-			}
-
-			if(metalRoughImg) {
-				w = std::max(w, metalRoughImg->s());
-				h = std::max(h, metalRoughImg->t());
-			}
-
-			osg::ref_ptr<osg::Image> occR = occlusionImg;
-
-			if(occlusionImg && (occlusionImg->s() != w || occlusionImg->t() != h)) {
-				occR = new osg::Image(*occlusionImg);
-
-				occR->scaleImage(w, h, 1);
-			}
-
-			osg::ref_ptr<osg::Image> mrR = metalRoughImg;
-
-			if(metalRoughImg && (metalRoughImg->s() != w || metalRoughImg->t() != h)) {
-				mrR = new osg::Image(*metalRoughImg);
-
-				mrR->scaleImage(w, h, 1);
-			}
-
-			auto* ormData = new unsigned char[static_cast<size_t>(w) * h * 3];
-
-			for(int y = 0; y < h; y++) {
-				for(int x = 0; x < w; x++) {
-					osg::Vec4 occTex = occR ? occR->getColor(x, y) : osg::Vec4(1, 1, 1, 1);
-					osg::Vec4 mrTex = mrR ? mrR->getColor(x, y) : osg::Vec4(1, 1, 1, 1);
-					float ao = 1.0f + strength * (occTex.x() - 1.0f);
-					size_t oi = (static_cast<size_t>(y) * w + x) * 3;
-
-					ormData[oi + 0] = static_cast<unsigned char>(osg::clampBetween(ao, 0.0f, 1.0f) * 255.0f + 0.5f);
-					ormData[oi + 1] = static_cast<unsigned char>(mrTex.y() * 255.0f + 0.5f);
-					ormData[oi + 2] = static_cast<unsigned char>(mrTex.z() * 255.0f + 0.5f);
-				}
-			}
-
-			outOrm = new osg::Image();
-			outOrm->setImage(
-				w,
-				h,
-				1,
-				GL_RGB8,
-				GL_RGB,
-				GL_UNSIGNED_BYTE,
-				ormData,
-				osg::Image::USE_NEW_DELETE
-			);
 		}
 
 		static int primitiveMode(int gltfMode) {

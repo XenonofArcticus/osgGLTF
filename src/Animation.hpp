@@ -90,10 +90,10 @@ private:
 	double _playTime = 0.0;
 	double _lastSimulationTime = 0.0;
 
-	void restoreBasePose();
-	static std::size_t sampleIndex(const std::vector<float>& times, double t, double& mix);
-	static osg::Vec3d sampleVec3(const Channel& channel, double t);
-	static osg::Quat sampleQuat(const Channel& channel, double t);
+	void _restoreBasePose();
+	static std::size_t _sampleIndex(const std::vector<float>& times, double t, double& mix);
+	static osg::Vec3d _sampleVec3(const Channel& channel, double t);
+	static osg::Quat _sampleQuat(const Channel& channel, double t);
 };
 
 }
