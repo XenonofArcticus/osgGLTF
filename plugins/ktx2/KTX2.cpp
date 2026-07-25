@@ -1,12 +1,14 @@
+#include "KTX2.hpp"
+
 #include <osg/GL>
 #include <osg/Image>
 #include <osg/TextureCubeMap>
-#include <osgDB/FileNameUtils>
-#include <osgDB/FileUtils>
-#include <osgDB/ReaderWriter>
-#include <osgDB/Registry>
 
 #include <ktx.h>
+
+#include <algorithm>
+#include <cstdint>
+#include <cstring>
 
 // GL constants not always defined in older OSG GL headers
 #ifndef GL_HALF_FLOAT
@@ -92,7 +94,32 @@
 // VkFormat <-> GL mappings
 // ---------------------------------------------------------------------------
 
-struct GLFormat { GLenum internal, pixel, type; bool compressed; };
+namespace {
+
+using ReadResult = osgDB::ReaderWriter::ReadResult;
+using WriteResult = osgDB::ReaderWriter::WriteResult;
+
+struct GLFormat {
+	GLenum _internal;
+	GLenum _pixel;
+	GLenum _type;
+	bool _compressed;
+};
+
+class TextureGuard {
+public:
+	explicit TextureGuard(ktxTexture2* texture):
+	_texture(texture) {}
+
+	~TextureGuard() {
+		ktxTexture_Destroy(reinterpret_cast<ktxTexture*>(_texture));
+	}
+	TextureGuard(const TextureGuard&) = delete;
+	TextureGuard& operator=(const TextureGuard&) = delete;
+
+private:
+	ktxTexture2* _texture;
+};
 
 static bool vkFormatToGL(ktx_uint32_t vk, GLFormat& out) {
 	switch (vk) {
@@ -142,7 +169,7 @@ static osg::ref_ptr<osg::Image> buildFaceImage(
 	// Total buffer: sum of this face's footprint across all mip levels
 	size_t totalSize = 0;
 
-	for(uint32_t mip = 0; mip < numLevels; ++mip) {
+	for(uint32_t mip = 0; mip < numLevels; mip++) {
 		totalSize += ktxTexture_GetImageSize(reinterpret_cast<ktxTexture*>(ktx), mip);
 	}
 
@@ -150,14 +177,14 @@ static osg::ref_ptr<osg::Image> buildFaceImage(
 	osg::Image::MipmapDataType mipmapOffsets;
 	size_t dstOff = 0;
 
-	for(uint32_t mip = 0; mip < numLevels; ++mip) {
+	for(uint32_t mip = 0; mip < numLevels; mip++) {
 		ktx_size_t srcOff = 0;
 
 		ktxTexture_GetImageOffset(reinterpret_cast<ktxTexture*>(ktx), mip, 0, face, &srcOff);
 
 		size_t mipSize = ktxTexture_GetImageSize(reinterpret_cast<ktxTexture*>(ktx), mip);
 
-		memcpy(buf + dstOff, src + srcOff, mipSize);
+		std::memcpy(buf + dstOff, src + srcOff, mipSize);
 
 		if(mip > 0) mipmapOffsets.push_back(static_cast<unsigned int>(dstOff));
 
@@ -173,9 +200,9 @@ static osg::ref_ptr<osg::Image> buildFaceImage(
 		w,
 		h,
 		1,
-		static_cast<GLint>(fmt.internal),
-		fmt.pixel,
-		fmt.type,
+		static_cast<GLint>(fmt._internal),
+		fmt._pixel,
+		fmt._type,
 		buf,
 		osg::Image::USE_NEW_DELETE
 	);
@@ -186,10 +213,11 @@ static osg::ref_ptr<osg::Image> buildFaceImage(
 }
 
 // ---------------------------------------------------------------------------
-// Plugin
+// Codec
 // ---------------------------------------------------------------------------
 
-class ReaderWriterKTX2: public osgDB::ReaderWriter {
+class Codec {
+public:
 	static ReadResult loadKTX2(const std::string& file) {
 		ktxTexture2* ktx = nullptr;
 
@@ -208,10 +236,7 @@ class ReaderWriterKTX2: public osgDB::ReaderWriter {
 			return ReadResult::ERROR_IN_READING_FILE;
 		}
 
-		struct Guard {
-			ktxTexture2* p;
-			~Guard() { ktxTexture_Destroy(reinterpret_cast<ktxTexture*>(p)); }
-		} g{ktx};
+		TextureGuard guard(ktx);
 
 		// Transcode Basis Universal (ETC1S / UASTC) to RGBA8.
 		// Note: HDR cubemaps should never be Basis-encoded; this is a safety net.
@@ -245,7 +270,7 @@ class ReaderWriterKTX2: public osgDB::ReaderWriter {
 			return ReadResult::FILE_NOT_HANDLED;
 		}
 
-		if(fmt.compressed) {
+		if(fmt._compressed) {
 			OSG_WARN
 				<< "ReaderWriterKTX2: BC-compressed KTX2 not yet supported: "
 				<< file << std::endl
@@ -259,12 +284,12 @@ class ReaderWriterKTX2: public osgDB::ReaderWriter {
 		if(numFaces == 6) {
 			osg::ref_ptr<osg::TextureCubeMap> texcm = new osg::TextureCubeMap();
 
-			for(uint32_t f = 0; f < 6; ++f) {
+			for(uint32_t f = 0; f < 6; f++) {
 				auto img = buildFaceImage(ktx, f, fmt);
 
 				if(!img) return ReadResult::ERROR_IN_READING_FILE;
 
-				texcm->setImage(f, img.get());
+				texcm->setImage(f, img);
 			}
 
 			texcm->setFilter(osg::Texture::MIN_FILTER, osg::Texture::LINEAR_MIPMAP_LINEAR);
@@ -273,7 +298,9 @@ class ReaderWriterKTX2: public osgDB::ReaderWriter {
 			texcm->setWrap(osg::Texture::WRAP_T, osg::Texture::CLAMP_TO_EDGE);
 			texcm->setWrap(osg::Texture::WRAP_R, osg::Texture::CLAMP_TO_EDGE);
 
-			return texcm.get();
+			osg::Object* object = texcm;
+
+			return object;
 		}
 
 		// 2D / BRDF LUT / equirect
@@ -283,7 +310,9 @@ class ReaderWriterKTX2: public osgDB::ReaderWriter {
 
 		img->setFileName(file);
 
-		return img.get();
+		osg::Object* object = img;
+
+		return object;
 	}
 
 	// getMipmapData(N) = _data + getMipmapOffset(N); getMipmapOffset(0) = 0, so N=0 -> _data.
@@ -335,12 +364,9 @@ class ReaderWriterKTX2: public osgDB::ReaderWriter {
 			return WriteResult::ERROR_IN_WRITING_FILE;
 		}
 
-		struct Guard {
-			ktxTexture2* p;
-			~Guard() { ktxTexture_Destroy(reinterpret_cast<ktxTexture*>(p)); }
-		} g{ktx};
+		TextureGuard guard(ktx);
 
-		for(uint32_t face = 0; face < 6; ++face) {
+		for(uint32_t face = 0; face < 6; face++) {
 			const osg::Image* img = texcm->getImage(face);
 
 			if(!img || !img->data()) {
@@ -352,7 +378,7 @@ class ReaderWriterKTX2: public osgDB::ReaderWriter {
 				return WriteResult::ERROR_IN_WRITING_FILE;
 			}
 
-			for(uint32_t mip = 0; mip < numMips; ++mip) {
+			for(uint32_t mip = 0; mip < numMips; mip++) {
 				ktx_size_t mipBytes = ktxTexture_GetImageSize(reinterpret_cast<ktxTexture*>(ktx), mip);
 
 				rc = ktxTexture_SetImageFromMemory(
@@ -430,12 +456,9 @@ class ReaderWriterKTX2: public osgDB::ReaderWriter {
 			return WriteResult::ERROR_IN_WRITING_FILE;
 		}
 
-		struct Guard {
-			ktxTexture2* p;
-			~Guard() { ktxTexture_Destroy(reinterpret_cast<ktxTexture*>(p)); }
-		} g{ktx};
+		TextureGuard guard(ktx);
 
-		for(uint32_t mip = 0; mip < numMips; ++mip) {
+		for(uint32_t mip = 0; mip < numMips; mip++) {
 			ktx_size_t mipBytes = ktxTexture_GetImageSize(reinterpret_cast<ktxTexture*>(ktx), mip);
 			rc = ktxTexture_SetImageFromMemory(
 				reinterpret_cast<ktxTexture*>(ktx),
@@ -468,64 +491,28 @@ class ReaderWriterKTX2: public osgDB::ReaderWriter {
 
 		return WriteResult::FILE_SAVED;
 	}
-
-public:
-	ReaderWriterKTX2() { supportsExtension("ktx2", "KTX 2.0 texture"); }
-
-	const char* className() const override { return "KTX2 Texture Reader/Writer"; }
-
-	ReadResult readObject(const std::string& file, const osgDB::Options* options) const override {
-		if(!acceptsExtension(osgDB::getLowerCaseFileExtension(file)))
-			return ReadResult::FILE_NOT_HANDLED;
-
-		const std::string found = osgDB::findDataFile(file, options);
-
-		if(found.empty()) return ReadResult::FILE_NOT_FOUND;
-
-		return loadKTX2(found);
-	}
-
-	ReadResult readImage(const std::string& file, const osgDB::Options* options) const override {
-		ReadResult rr = readObject(file, options);
-
-		if(!rr.success()) return rr;
-		if(rr.validImage()) return rr;
-
-		OSG_WARN
-			<< "ReaderWriterKTX2: readImage() called on a cubemap KTX2 -- use readObject() instead"
-			<< std::endl
-		;
-
-		return ReadResult::FILE_NOT_HANDLED;
-	}
-
-	WriteResult writeObject(
-		const osg::Object& obj,
-		const std::string& file,
-		const osgDB::Options*
-	) const override {
-		if(!acceptsExtension(osgDB::getLowerCaseFileExtension(file)))
-			return WriteResult::FILE_NOT_HANDLED;
-
-		if(const auto* texcm = dynamic_cast<const osg::TextureCubeMap*>(&obj))
-			return saveCubeMap(texcm, file);
-
-		if(const auto* img = dynamic_cast<const osg::Image*>(&obj))
-			return save2DImage(img, file);
-
-		return WriteResult::FILE_NOT_HANDLED;
-	}
-
-	WriteResult writeImage(
-		const osg::Image& img,
-		const std::string& file,
-		const osgDB::Options*
-	) const override {
-		if(!acceptsExtension(osgDB::getLowerCaseFileExtension(file)))
-			return WriteResult::FILE_NOT_HANDLED;
-
-		return save2DImage(&img, file);
-	}
 };
 
-REGISTER_OSGPLUGIN(ktx2, ReaderWriterKTX2)
+}
+
+namespace osgKTX2 {
+
+osgDB::ReaderWriter::ReadResult read(const std::string& file) {
+	return Codec::loadKTX2(file);
+}
+
+osgDB::ReaderWriter::WriteResult write(
+	const osg::TextureCubeMap& texture,
+	const std::string& file
+) {
+	return Codec::saveCubeMap(&texture, file);
+}
+
+osgDB::ReaderWriter::WriteResult write(
+	const osg::Image& image,
+	const std::string& file
+) {
+	return Codec::save2DImage(&image, file);
+}
+
+}

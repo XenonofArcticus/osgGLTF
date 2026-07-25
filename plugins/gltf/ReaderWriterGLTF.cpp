@@ -5,8 +5,6 @@
 
 class ReaderWriterGLTF: public osgDB::ReaderWriter {
 public:
-	mutable osgGLTF::Reader::TextureCache _cache;
-
 	ReaderWriterGLTF() {
 		supportsExtension("gltf", "glTF 2.0 ASCII");
 		supportsExtension("glb", "glTF 2.0 binary");
@@ -35,6 +33,9 @@ public:
 
 		return reader.read(location, ext == "glb", options);
 	}
+
+private:
+	mutable osgGLTF::Reader::TextureCache _cache;
 };
 
 REGISTER_OSGPLUGIN(gltf, ReaderWriterGLTF)

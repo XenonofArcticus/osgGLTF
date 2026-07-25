@@ -76,6 +76,11 @@ if(OSGGLTF_BUILD_TOOLS)
 endif()
 
 add_subdirectory("src")
+add_subdirectory("plugins/gltf")
+
+if(OSGGLTF_BUILD_KTX2)
+	add_subdirectory("plugins/ktx2")
+endif()
 
 if(OSGGLTF_BUILD_EXAMPLES)
 	add_subdirectory("examples")

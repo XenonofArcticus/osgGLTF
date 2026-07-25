@@ -82,56 +82,6 @@ if(OSGGLTF_INSTALL)
 	)
 endif()
 
-add_library(osgdb_gltf MODULE
-	ReaderWriterGLTF.cpp
-)
-
-target_link_libraries(osgdb_gltf PRIVATE osgGLTF::osgGLTF)
-
-set_target_properties(osgdb_gltf PROPERTIES
-	CXX_STANDARD 20
-	CXX_STANDARD_REQUIRED ON
-	PREFIX "" # OSG plugin loader expects no "lib" prefix
-)
-
-if(OSGGLTF_INSTALL)
-	install(TARGETS osgdb_gltf
-		DESTINATION ${CMAKE_INSTALL_PREFIX}/lib64/osgPlugins-${OPENSCENEGRAPH_VERSION}
-	)
-endif()
-
-# ---------------------------------------------------------------------------
-# KTX2 plugin - requires ext/KTX-Software submodule
-# ---------------------------------------------------------------------------
-
-if(OSGGLTF_BUILD_KTX2)
-	add_library(osgdb_ktx2 MODULE
-		ReaderWriterKTX2.cpp
-	)
-
-	target_include_directories(osgdb_ktx2 PRIVATE
-		${CMAKE_CURRENT_SOURCE_DIR}
-		${OPENSCENEGRAPH_INCLUDE_DIRS}
-	)
-
-	target_link_libraries(osgdb_ktx2 PRIVATE
-		ktx
-		${OPENSCENEGRAPH_LIBRARIES}
-	)
-
-	set_target_properties(osgdb_ktx2 PROPERTIES
-		CXX_STANDARD 20
-		CXX_STANDARD_REQUIRED ON
-		PREFIX ""
-	)
-
-	if(OSGGLTF_INSTALL)
-		install(TARGETS osgdb_ktx2
-			DESTINATION ${CMAKE_INSTALL_PREFIX}/lib64/osgPlugins-${OPENSCENEGRAPH_VERSION}
-		)
-	endif()
-endif()
-
 # ---------------------------------------------------------------------------
 # osggltf-iblbake-gpu - GPU IBL baker: HDR equirect -> GGX-prefiltered KTX2 cubemap
 # ---------------------------------------------------------------------------
