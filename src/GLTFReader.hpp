@@ -375,7 +375,7 @@ public:
 
 			GLTF_NOTIFY(0) << "extractArrays done - " << arrays.size() << " array(s) built" << std::endl;
 
-			prepareSkins();
+			skins = osgGLTF::detail::prepareSkins(model, arrays);
 		}
 
 		osg::Node* createNode(int nodeIdx, unsigned depth = 0) const {
@@ -447,165 +447,12 @@ public:
 			return mt;
 		}
 
-		void prepareSkins() {
-			skins.reserve(model.skins.size());
-
-			for(size_t skinIdx = 0; skinIdx < model.skins.size(); skinIdx++) {
-				const tinygltf::Skin& src = model.skins[skinIdx];
-				osg::ref_ptr<osgGLTF::detail::Skin> skin = new osgGLTF::detail::Skin();
-
-				skin->index = static_cast<int>(skinIdx);
-				skin->name = src.name;
-				skin->joints = src.joints;
-				skin->skeleton = src.skeleton;
-				skin->inverseBindMatrices.resize(src.joints.size(), osg::Matrixf::identity());
-				skin->jointNodes.resize(src.joints.size());
-
-				if(
-					src.inverseBindMatrices >= 0 &&
-					src.inverseBindMatrices < static_cast<int>(arrays.size()) &&
-					arrays[src.inverseBindMatrices].valid()
-				) {
-					auto* ibm = dynamic_cast<osg::MatrixfArray*>(arrays[src.inverseBindMatrices].get());
-
-					if(ibm) {
-						size_t count = std::min<size_t>(ibm->size(), skin->inverseBindMatrices.size());
-
-						std::copy(ibm->begin(), ibm->begin() + count, skin->inverseBindMatrices.begin());
-
-						if(count != skin->inverseBindMatrices.size()) {
-							GLTF_NOTIFY(1)
-								<< "skin[" << skinIdx << "] inverseBindMatrices count "
-								<< count << " does not match joints count "
-								<< skin->inverseBindMatrices.size() << std::endl
-							;
-						}
-					}
-
-					else {
-						GLTF_NOTIFY(1)
-							<< "skin[" << skinIdx << "] inverseBindMatrices accessor "
-							<< src.inverseBindMatrices << " is not a MatrixfArray" << std::endl
-						;
-					}
-				}
-
-				else if(src.inverseBindMatrices >= 0) {
-					GLTF_NOTIFY(1)
-						<< "skin[" << skinIdx << "] inverseBindMatrices accessor "
-						<< src.inverseBindMatrices << " is unavailable" << std::endl
-					;
-				}
-
-				skin->initPalette();
-
-				GLTF_NOTIFY(1)
-					<< "prepared skin[" << skinIdx << "] '" << skin->name << "'"
-					<< " joints=" << skin->joints.size()
-					<< " inverseBindMatrices=" << skin->inverseBindMatrices.size()
-					<< " skeleton=" << skin->skeleton << std::endl
-				;
-
-				skins.push_back(skin);
-			}
-		}
-
 		void resolveSkinJointNodes() {
-			// Built once for the whole model (not per-skin): glTF node index -> its parent's node
-			// index, derived from node.children since tinygltf doesn't expose parent pointers.
-			std::unordered_map<int, int> nodeParent;
-
-			for(size_t nodeIdx = 0; nodeIdx < model.nodes.size(); nodeIdx++) {
-				for(int childIdx : model.nodes[nodeIdx].children) {
-					nodeParent[childIdx] = static_cast<int>(nodeIdx);
-				}
-			}
-
-			for(auto& skinRef : skins) {
-				osgGLTF::detail::Skin* skin = skinRef;
-				if(!skin) continue;
-
-				size_t resolved = 0;
-				std::unordered_map<int, int> nodeIdxToJointIdx;
-
-				for(size_t jointIdx = 0; jointIdx < skin->joints.size(); jointIdx++) {
-					nodeIdxToJointIdx[skin->joints[jointIdx]] = static_cast<int>(jointIdx);
-				}
-
-				skin->parentJointIndex.assign(skin->joints.size(), -1);
-				skin->jointWorldCache.resize(skin->joints.size());
-				skin->jointWorldComputed.resize(skin->joints.size());
-
-				for(size_t jointIdx = 0; jointIdx < skin->joints.size(); jointIdx++) {
-					int nodeIdx = skin->joints[jointIdx];
-
-					if(
-						nodeIdx >= 0 &&
-						nodeIdx < static_cast<int>(nodeTransforms.size()) &&
-						nodeTransforms[nodeIdx].valid()
-					) {
-						skin->jointNodes[jointIdx] = nodeTransforms[nodeIdx];
-						resolved++;
-					}
-
-					auto parentNode = nodeParent.find(nodeIdx);
-
-					if(parentNode != nodeParent.end()) {
-						auto parentJoint = nodeIdxToJointIdx.find(parentNode->second);
-
-						if(parentJoint != nodeIdxToJointIdx.end()) {
-							skin->parentJointIndex[jointIdx] = parentJoint->second;
-						}
-					}
-				}
-
-				GLTF_NOTIFY(1)
-					<< "resolved skin[" << skin->index << "] joint nodes "
-					<< resolved << "/" << skin->joints.size() << std::endl
-				;
-			}
+			osgGLTF::detail::resolveSkinJointNodes(model, nodeTransforms, skins);
 		}
 
 		void installSkinPaletteCallbacks() {
-			for(auto& skinRef : skins) {
-				osgGLTF::detail::Skin* skin = skinRef;
-				if(!skin || !skin->paletteMatrices) continue;
-
-				const auto totalSize = static_cast<GLsizeiptr>(
-					skin->paletteMatrices->getTotalDataSize()
-				);
-
-				for(auto& skinnedNodeRef : skin->skinnedNodes) {
-					osg::ref_ptr<osg::MatrixTransform> skinnedNode;
-
-					skinnedNodeRef.lock(skinnedNode);
-
-					if(!skinnedNode) continue;
-
-					skinnedNode->addUpdateCallback(
-						new osgGLTF::detail::SkinPaletteCallback(skin)
-					);
-
-					skinnedNode->getOrCreateStateSet()->setAttributeAndModes(
-						new osg::ShaderStorageBufferBinding(
-							osgGLTF::shader::JOINT_MATRICES_SSBO_BINDING,
-							skin->paletteMatrices,
-							0,
-							totalSize
-						),
-						osg::StateAttribute::ON
-					);
-
-					skin->updatePalette(skinnedNode);
-
-					GLTF_NOTIFY(1)
-						<< "installed skin[" << skin->index << "] palette callback on '"
-						<< skinnedNode->getName() << "'"
-						<< " SSBO binding=" << osgGLTF::shader::JOINT_MATRICES_SSBO_BINDING
-						<< " bytes=" << totalSize << std::endl
-					;
-				}
-			}
+			osgGLTF::detail::installSkinPaletteCallbacks(skins);
 		}
 
 		void installAnimationCallback(osg::Node* root) const {

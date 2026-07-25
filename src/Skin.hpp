@@ -11,6 +11,8 @@
 #include <string>
 #include <vector>
 
+namespace tinygltf { class Model; }
+
 namespace osgGLTF::detail {
 
 struct Skin: public osg::Referenced {
@@ -45,5 +47,18 @@ private:
 	osg::ref_ptr<Skin> _skin;
 	bool _loggedOnce = false;
 };
+
+std::vector<osg::ref_ptr<Skin>> prepareSkins(
+	const tinygltf::Model& model,
+	const std::vector<osg::ref_ptr<osg::Array>>& arrays
+);
+
+void resolveSkinJointNodes(
+	const tinygltf::Model& model,
+	const std::vector<osg::observer_ptr<osg::MatrixTransform>>& nodeTransforms,
+	const std::vector<osg::ref_ptr<Skin>>& skins
+);
+
+void installSkinPaletteCallbacks(const std::vector<osg::ref_ptr<Skin>>& skins);
 
 }

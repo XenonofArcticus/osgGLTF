@@ -38,7 +38,7 @@ set_target_properties(osgGLTF PROPERTIES
 # TinyGLTF.cpp owns the single tinygltf/STB implementation. tinygltf's bundled JSON header uses
 # the deprecated std::is_pod trait; isolate that third-party warning to these translation units.
 if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
-	set_source_files_properties(Animation.cpp Reader.cpp TinyGLTF.cpp PROPERTIES
+	set_source_files_properties(Animation.cpp Reader.cpp Skin.cpp TinyGLTF.cpp PROPERTIES
 		COMPILE_OPTIONS "-Wno-deprecated-declarations"
 	)
 endif()
