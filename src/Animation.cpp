@@ -9,6 +9,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <utility>
 
 namespace osgGLTF::detail {
 
@@ -50,6 +51,219 @@ TRS nodeBaseTRS(const tinygltf::Node& node) {
 	);
 
 	return trs;
+}
+
+namespace {
+
+std::vector<float> readFloatTimes(
+	const std::vector<osg::ref_ptr<osg::Array>>& arrays,
+	int accessorIndex
+) {
+	if(
+		accessorIndex < 0 ||
+		accessorIndex >= static_cast<int>(arrays.size()) ||
+		!arrays[accessorIndex]
+	) return {};
+
+	osg::Array* array = arrays[accessorIndex];
+	auto* source = dynamic_cast<osg::FloatArray*>(array);
+
+	if(!source) return {};
+
+	return std::vector<float>(source->begin(), source->end());
+}
+
+std::vector<osg::Vec3d> readVec3Values(
+	const std::vector<osg::ref_ptr<osg::Array>>& arrays,
+	int accessorIndex
+) {
+	if(
+		accessorIndex < 0 ||
+		accessorIndex >= static_cast<int>(arrays.size()) ||
+		!arrays[accessorIndex]
+	) return {};
+
+	osg::Array* array = arrays[accessorIndex];
+	auto* source = dynamic_cast<osg::Vec3Array*>(array);
+
+	if(!source) return {};
+
+	std::vector<osg::Vec3d> values;
+
+	values.reserve(source->size());
+
+	for(const osg::Vec3& value : *source) {
+		values.emplace_back(value.x(), value.y(), value.z());
+	}
+
+	return values;
+}
+
+std::vector<osg::Quat> readQuatValues(
+	const std::vector<osg::ref_ptr<osg::Array>>& arrays,
+	int accessorIndex
+) {
+	if(
+		accessorIndex < 0 ||
+		accessorIndex >= static_cast<int>(arrays.size()) ||
+		!arrays[accessorIndex]
+	) return {};
+
+	osg::Array* array = arrays[accessorIndex];
+	auto* source = dynamic_cast<osg::Vec4Array*>(array);
+
+	if(!source) return {};
+
+	std::vector<osg::Quat> values;
+
+	values.reserve(source->size());
+
+	for(const osg::Vec4& value : *source) {
+		values.emplace_back(value.x(), value.y(), value.z(), value.w());
+	}
+
+	return values;
+}
+
+}
+
+void installAnimationCallback(
+	const tinygltf::Model& model,
+	const std::vector<osg::ref_ptr<osg::Array>>& arrays,
+	const std::vector<osg::observer_ptr<osg::MatrixTransform>>& nodeTransforms,
+	osg::Node* root,
+	bool skipAnimation
+) {
+	if(skipAnimation) {
+		GLTF_NOTIFY(1) << "animation disabled by gltfSkipAnimation option" << std::endl;
+
+		return;
+	}
+
+	if(!root || model.animations.empty()) return;
+
+	osg::ref_ptr<AnimationCallback> callback = new AnimationCallback();
+
+	for(
+		std::size_t animationIndex = 0;
+		animationIndex < model.animations.size();
+		animationIndex++
+	) {
+		const tinygltf::Animation& animation = model.animations[animationIndex];
+		AnimationCallback::Clip clip;
+
+		clip.name = animation.name.empty()
+			? std::string("animation[") + std::to_string(animationIndex) + "]"
+			: animation.name
+		;
+
+		for(
+			std::size_t channelIndex = 0;
+			channelIndex < animation.channels.size();
+			channelIndex++
+		) {
+			const tinygltf::AnimationChannel& gltfChannel = animation.channels[channelIndex];
+
+			if(
+				gltfChannel.sampler < 0 ||
+				gltfChannel.sampler >= static_cast<int>(animation.samplers.size())
+			) continue;
+
+			if(
+				gltfChannel.target_node < 0 ||
+				gltfChannel.target_node >= static_cast<int>(nodeTransforms.size()) ||
+				!nodeTransforms[gltfChannel.target_node].valid()
+			) continue;
+
+			const tinygltf::AnimationSampler& gltfSampler =
+				animation.samplers[gltfChannel.sampler];
+
+			if(gltfSampler.interpolation == "CUBICSPLINE") {
+				GLTF_NOTIFY(2)
+					<< "animation '" << clip.name
+					<< "' channel[" << channelIndex << "] CUBICSPLINE skipped" << std::endl
+				;
+				continue;
+			}
+
+			AnimationCallback::Channel channel;
+
+			channel.target = nodeTransforms[gltfChannel.target_node];
+			channel.targetNode = gltfChannel.target_node;
+			channel.interpolation = gltfSampler.interpolation.empty()
+				? "LINEAR"
+				: gltfSampler.interpolation
+			;
+			channel.times = readFloatTimes(arrays, gltfSampler.input);
+
+			if(gltfChannel.target_path == "translation") {
+				channel.path = AnimationCallback::Path::Translation;
+				channel.vec3Values = readVec3Values(arrays, gltfSampler.output);
+			}
+			else if(gltfChannel.target_path == "rotation") {
+				channel.path = AnimationCallback::Path::Rotation;
+				channel.quatValues = readQuatValues(arrays, gltfSampler.output);
+			}
+			else if(gltfChannel.target_path == "scale") {
+				channel.path = AnimationCallback::Path::Scale;
+				channel.vec3Values = readVec3Values(arrays, gltfSampler.output);
+			}
+			else {
+				GLTF_NOTIFY(2)
+					<< "animation '" << clip.name
+					<< "' channel[" << channelIndex << "] path '"
+					<< gltfChannel.target_path << "' skipped" << std::endl
+				;
+				continue;
+			}
+
+			if(channel.times.empty()) continue;
+
+			if(
+				channel.path == AnimationCallback::Path::Rotation &&
+				channel.quatValues.size() != channel.times.size()
+			) continue;
+
+			if(
+				channel.path != AnimationCallback::Path::Rotation &&
+				channel.vec3Values.size() != channel.times.size()
+			) continue;
+
+			clip.duration = std::max<double>(clip.duration, channel.times.back());
+			callback->baseTRS.emplace(
+				gltfChannel.target_node,
+				nodeBaseTRS(model.nodes[gltfChannel.target_node])
+			);
+			clip.channels.push_back(std::move(channel));
+		}
+
+		if(clip.channels.empty()) {
+			GLTF_NOTIFY(1)
+				<< "animation '" << clip.name << "' has no supported channels" << std::endl
+			;
+		}
+		else {
+			GLTF_NOTIFY(1)
+				<< "loaded animation '" << clip.name << "'"
+				<< " channels=" << clip.channels.size()
+				<< " duration=" << clip.duration << std::endl
+			;
+		}
+
+		callback->clips.push_back(std::move(clip));
+	}
+
+	std::size_t initialAnimation = 0;
+
+	for(std::size_t i = 0; i < model.animations.size(); i++) {
+		if(model.animations[i].name == "Walk") {
+			initialAnimation = i;
+			break;
+		}
+	}
+
+	callback->playAnimation(initialAnimation);
+	root->addUpdateCallback(callback);
 }
 
 std::size_t AnimationCallback::getNumAnimations() const {
@@ -179,9 +393,12 @@ void AnimationCallback::restoreBasePose() {
 	for(const Clip& clip : clips) {
 		for(const Channel& channel : clip.channels) {
 			auto it = baseTRS.find(channel.targetNode);
+			osg::ref_ptr<osg::MatrixTransform> target;
 
-			if(it != baseTRS.end() && channel.target.valid()) {
-				channel.target->setMatrix(it->second.matrix());
+			channel.target.lock(target);
+
+			if(it != baseTRS.end() && target) {
+				target->setMatrix(it->second.matrix());
 			}
 		}
 	}

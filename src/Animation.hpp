@@ -1,5 +1,6 @@
 #pragma once
 
+#include <osg/Array>
 #include <osg/Callback>
 #include <osg/Matrixd>
 #include <osg/MatrixTransform>
@@ -7,6 +8,7 @@
 #include <osg/Quat>
 #include <osg/Vec3d>
 #include <osg/observer_ptr>
+#include <osg/ref_ptr>
 
 #include <osgGLTF/SimplePlayer.hpp>
 
@@ -15,7 +17,10 @@
 #include <string>
 #include <vector>
 
-namespace tinygltf { class Node; }
+namespace tinygltf {
+class Model;
+class Node;
+}
 
 namespace osgGLTF::detail {
 
@@ -28,6 +33,14 @@ struct TRS {
 };
 
 TRS nodeBaseTRS(const tinygltf::Node& node);
+
+void installAnimationCallback(
+	const tinygltf::Model& model,
+	const std::vector<osg::ref_ptr<osg::Array>>& arrays,
+	const std::vector<osg::observer_ptr<osg::MatrixTransform>>& nodeTransforms,
+	osg::Node* root,
+	bool skipAnimation
+);
 
 class AnimationCallback:
 	public osg::NodeCallback,
