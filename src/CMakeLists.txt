@@ -1,5 +1,7 @@
 add_library(osgGLTF
+	Animation.cpp
 	Reader.cpp
+	TinyGLTF.cpp
 )
 add_library(osgGLTF::osgGLTF ALIAS osgGLTF)
 
@@ -12,6 +14,17 @@ target_include_directories(osgGLTF
 	PRIVATE
 		${PROJECT_SOURCE_DIR}/ext/tinygltf
 )
+target_sources(osgGLTF PUBLIC
+	"$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/osgGLTF/Reader.hpp>"
+	"$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/osgGLTF/Shader.hpp>"
+	"$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/osgGLTF/SimplePlayer.hpp>"
+)
+target_sources(osgGLTF PRIVATE
+	Animation.hpp
+	GLTFReader.hpp
+	GLTFReader-Skin.hpp
+	Log.hpp
+)
 target_link_libraries(osgGLTF PUBLIC
 	"$<BUILD_INTERFACE:${OPENSCENEGRAPH_LIBRARIES}>"
 )
@@ -21,10 +34,10 @@ set_target_properties(osgGLTF PROPERTIES
 	WINDOWS_EXPORT_ALL_SYMBOLS ON
 )
 
-# Reader.cpp owns the single tinygltf/STB implementation. tinygltf's bundled JSON header uses
-# the deprecated std::is_pod trait; isolate that third-party warning to this translation unit.
+# TinyGLTF.cpp owns the single tinygltf/STB implementation. tinygltf's bundled JSON header uses
+# the deprecated std::is_pod trait; isolate that third-party warning to these translation units.
 if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
-	set_source_files_properties(Reader.cpp PROPERTIES
+	set_source_files_properties(Animation.cpp Reader.cpp TinyGLTF.cpp PROPERTIES
 		COMPILE_OPTIONS "-Wno-deprecated-declarations"
 	)
 endif()
@@ -35,7 +48,8 @@ if(OSGGLTF_INSTALL)
 		LIBRARY DESTINATION "${CMAKE_INSTALL_LIBDIR}"
 		RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}"
 	)
-	install(DIRECTORY osgGLTF/ DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}/osgGLTF"
+	install(DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/osgGLTF/"
+		DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}/osgGLTF"
 		FILES_MATCHING PATTERN "*.hpp"
 	)
 	install(EXPORT osgGLTFTargets

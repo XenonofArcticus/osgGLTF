@@ -8,8 +8,9 @@
 // osgEarth logging macros -> OSG_WARN/GLTF_NOTIFY,
 // osgEarth mutex wrapper -> std::mutex + std::lock_guard.
 
-// Private implementation detail: Reader.cpp instantiates tinygltf/STB, includes tiny_gltf.h, then
-// includes this file. Consumers use osgGLTF/Reader.hpp and never include this implementation.
+// Private implementation detail: TinyGLTF.cpp instantiates tinygltf/STB. Reader.cpp includes the
+// tinygltf declarations before this file. Consumers use osgGLTF/Reader.hpp and never include this
+// implementation.
 
 #pragma once
 
@@ -20,7 +21,6 @@
 #include <osg/CullFace>
 #include <osg/BlendFunc>
 #include <osg/Depth>
-#include <osg/Notify>
 #include <osg/Math>
 
 #include <osgUtil/SmoothingVisitor>
@@ -38,7 +38,6 @@
 #include <cstdlib>
 #include <map>
 #include <mutex>
-#include <ostream>
 #include <unordered_map>
 #include <string>
 
@@ -51,21 +50,8 @@
 # define GL_SRGB8_ALPHA8 0x8C43
 #endif
 
-// Change this to osg::INFO/osg::DEBUG_INFO/etc. to reduce verbosity.
-#define GLTF_NOTIFY_SEVERITY osg::NOTICE
-
-inline std::ostream& gltfNotify(osg::NotifySeverity severity, size_t indent=0) {
-	std::ostream& out = osg::notify(severity) << "[GLTF] ";
-
-	for(size_t i = 0; i < indent; i++) out << "  ";
-
-	return out;
-}
-
-#define GLTF_NOTIFY(indent) \
-	if(osg::isNotifyEnabled(GLTF_NOTIFY_SEVERITY)) gltfNotify(GLTF_NOTIFY_SEVERITY, indent)
-
-#include "GLTFReader-Animation.hpp"
+#include "Animation.hpp"
+#include "Log.hpp"
 #include "GLTFReader-Skin.hpp"
 
 class GLTFReader {
@@ -627,11 +613,12 @@ public:
 
 			if(!root || model.animations.empty()) return;
 
-			osg::ref_ptr<GLTFAnimationCallback> callback = new GLTFAnimationCallback();
+			osg::ref_ptr<osgGLTF::detail::AnimationCallback> callback =
+				new osgGLTF::detail::AnimationCallback();
 
 			for(size_t animIdx = 0; animIdx < model.animations.size(); animIdx++) {
 				const tinygltf::Animation& animation = model.animations[animIdx];
-				GLTFAnimationCallback::Clip clip;
+				osgGLTF::detail::AnimationCallback::Clip clip;
 
 				clip.name = animation.name.empty()
 					? std::string("animation[") + std::to_string(animIdx) + "]"
@@ -662,9 +649,9 @@ public:
 					continue;
 				}
 
-				GLTFAnimationCallback::Channel channel;
+				osgGLTF::detail::AnimationCallback::Channel channel;
 
-				channel.target = nodeTransforms[gltfChannel.target_node].get();
+				channel.target = nodeTransforms[gltfChannel.target_node];
 				channel.targetNode = gltfChannel.target_node;
 				channel.interpolation = gltfSampler.interpolation.empty()
 					? "LINEAR"
@@ -673,17 +660,17 @@ public:
 				channel.times = readFloatTimes(gltfSampler.input);
 
 				if(gltfChannel.target_path == "translation") {
-					channel.path = GLTFAnimationCallback::Path::Translation;
+					channel.path = osgGLTF::detail::AnimationCallback::Path::Translation;
 					channel.vec3Values = readVec3Values(gltfSampler.output);
 				}
 
 				else if(gltfChannel.target_path == "rotation") {
-					channel.path = GLTFAnimationCallback::Path::Rotation;
+					channel.path = osgGLTF::detail::AnimationCallback::Path::Rotation;
 					channel.quatValues = readQuatValues(gltfSampler.output);
 				}
 
 				else if(gltfChannel.target_path == "scale") {
-					channel.path = GLTFAnimationCallback::Path::Scale;
+					channel.path = osgGLTF::detail::AnimationCallback::Path::Scale;
 					channel.vec3Values = readVec3Values(gltfSampler.output);
 				}
 
@@ -699,19 +686,19 @@ public:
 				if(channel.times.empty()) continue;
 
 				if(
-					channel.path == GLTFAnimationCallback::Path::Rotation &&
+					channel.path == osgGLTF::detail::AnimationCallback::Path::Rotation &&
 					channel.quatValues.size() != channel.times.size()
 				) continue;
 
 				if(
-					channel.path != GLTFAnimationCallback::Path::Rotation &&
+					channel.path != osgGLTF::detail::AnimationCallback::Path::Rotation &&
 					channel.vec3Values.size() != channel.times.size()
 				) continue;
 
 				clip.duration = std::max<double>(clip.duration, channel.times.back());
 				callback->baseTRS.emplace(
 					gltfChannel.target_node,
-					gltfNodeBaseTRS(model.nodes[gltfChannel.target_node])
+					osgGLTF::detail::nodeBaseTRS(model.nodes[gltfChannel.target_node])
 				);
 				clip.channels.push_back(std::move(channel));
 				}
@@ -740,7 +727,7 @@ public:
 			}
 
 			callback->playAnimation(initialAnimation);
-			root->addUpdateCallback(callback.get());
+			root->addUpdateCallback(callback);
 		}
 
 		std::vector<float> readFloatTimes(int accessorIdx) const {
