@@ -1,6 +1,7 @@
 add_library(osgGLTF
 	Animation.cpp
 	Reader.cpp
+	Skin.cpp
 	TinyGLTF.cpp
 )
 add_library(osgGLTF::osgGLTF ALIAS osgGLTF)
@@ -22,8 +23,8 @@ target_sources(osgGLTF PUBLIC
 target_sources(osgGLTF PRIVATE
 	Animation.hpp
 	GLTFReader.hpp
-	GLTFReader-Skin.hpp
 	Log.hpp
+	Skin.hpp
 )
 target_link_libraries(osgGLTF PUBLIC
 	"$<BUILD_INTERFACE:${OPENSCENEGRAPH_LIBRARIES}>"

@@ -20,6 +20,8 @@
 #include <osg/Texture2D>
 #include <osg/CullFace>
 #include <osg/BlendFunc>
+#include <osg/BufferIndexBinding>
+#include <osg/BufferObject>
 #include <osg/Depth>
 #include <osg/Math>
 
@@ -52,7 +54,7 @@
 
 #include "Animation.hpp"
 #include "Log.hpp"
-#include "GLTFReader-Skin.hpp"
+#include "Skin.hpp"
 
 class GLTFReader {
 public:
@@ -351,7 +353,7 @@ public:
 		const Env& env;
 		ProgressCallback progress;
 		std::vector<osg::ref_ptr<osg::Array>> arrays;
-		std::vector<osg::ref_ptr<GLTFSkin>> skins;
+		std::vector<osg::ref_ptr<osgGLTF::detail::Skin>> skins;
 		mutable std::vector<osg::observer_ptr<osg::MatrixTransform>> nodeTransforms;
 		mutable size_t nodesBuilt = 0;
 
@@ -450,7 +452,7 @@ public:
 
 			for(size_t skinIdx = 0; skinIdx < model.skins.size(); skinIdx++) {
 				const tinygltf::Skin& src = model.skins[skinIdx];
-				osg::ref_ptr<GLTFSkin> skin = new GLTFSkin();
+				osg::ref_ptr<osgGLTF::detail::Skin> skin = new osgGLTF::detail::Skin();
 
 				skin->index = static_cast<int>(skinIdx);
 				skin->name = src.name;
@@ -520,7 +522,7 @@ public:
 			}
 
 			for(auto& skinRef : skins) {
-				GLTFSkin* skin = skinRef.get();
+				osgGLTF::detail::Skin* skin = skinRef;
 				if(!skin) continue;
 
 				size_t resolved = 0;
@@ -542,7 +544,7 @@ public:
 						nodeIdx < static_cast<int>(nodeTransforms.size()) &&
 						nodeTransforms[nodeIdx].valid()
 					) {
-						skin->jointNodes[jointIdx] = nodeTransforms[nodeIdx].get();
+						skin->jointNodes[jointIdx] = nodeTransforms[nodeIdx];
 						resolved++;
 					}
 
@@ -566,7 +568,7 @@ public:
 
 		void installSkinPaletteCallbacks() {
 			for(auto& skinRef : skins) {
-				GLTFSkin* skin = skinRef.get();
+				osgGLTF::detail::Skin* skin = skinRef;
 				if(!skin || !skin->paletteMatrices) continue;
 
 				const auto totalSize = static_cast<GLsizeiptr>(
@@ -574,16 +576,20 @@ public:
 				);
 
 				for(auto& skinnedNodeRef : skin->skinnedNodes) {
-					osg::MatrixTransform* skinnedNode = skinnedNodeRef.get();
+					osg::ref_ptr<osg::MatrixTransform> skinnedNode;
+
+					skinnedNodeRef.lock(skinnedNode);
 
 					if(!skinnedNode) continue;
 
-					skinnedNode->addUpdateCallback(new GLTFSkinPaletteCallback(skin));
+					skinnedNode->addUpdateCallback(
+						new osgGLTF::detail::SkinPaletteCallback(skin)
+					);
 
 					skinnedNode->getOrCreateStateSet()->setAttributeAndModes(
 						new osg::ShaderStorageBufferBinding(
 							osgGLTF::shader::JOINT_MATRICES_SSBO_BINDING,
-							skin->paletteMatrices.get(),
+							skin->paletteMatrices,
 							0,
 							totalSize
 						),
