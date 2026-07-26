@@ -26,6 +26,8 @@ OSGX_DISABLE_WARNINGS
 #include <osg/Group>
 #include <osg/Image>
 #include <osg/Notify>
+#include <osg/Texture2D>
+#include <osg/TextureCubeMap>
 #include <osg/Vec3>
 #include <osg/Vec4>
 #include <osg/observer_ptr>
@@ -37,6 +39,9 @@ OSGX_DISABLE_WARNINGS
 OSGX_ENABLE_WARNINGS
 
 #include <atomic>
+#include <array>
+#include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <map>
 #include <numbers>
@@ -169,19 +174,101 @@ bool applyKhronosCamera(osg::Camera* camera, const std::string& filename) {
 	return true;
 }
 
+bool readRawRGBA32F(const std::filesystem::path& filename, int width, int height, osg::ref_ptr<osg::Image>& image) {
+	const std::size_t expectedBytes =
+		static_cast<std::size_t>(width) * static_cast<std::size_t>(height) * 4 * sizeof(float);
+	std::error_code error;
+	const auto actualBytes = std::filesystem::file_size(filename, error);
+
+	if(error || actualBytes != expectedBytes) {
+		std::cerr << "Expected " << expectedBytes << " bytes in '" << filename.string()
+			<< "', got " << (error ? 0 : actualBytes) << std::endl;
+
+		return false;
+	}
+
+	auto result = osgx::make_ref<osg::Image>();
+
+	result->allocateImage(width, height, 1, GL_RGBA, GL_FLOAT);
+
+	std::ifstream input(filename, std::ios::binary);
+
+	input.read(reinterpret_cast<char*>(result->data()), static_cast<std::streamsize>(expectedBytes));
+
+	if(!input) {
+		std::cerr << "Failed to read '" << filename.string() << "'" << std::endl;
+
+		return false;
+	}
+
+	image = result;
+
+	return true;
+}
+
+struct OfficialIBL {
+	osg::ref_ptr<osg::TextureCubeMap> diffuse;
+	osg::ref_ptr<osg::Texture2D> lut;
+};
+
+bool loadOfficialIBL(const std::filesystem::path& directory, OfficialIBL& ibl) {
+	static constexpr std::array faces = {
+		osg::TextureCubeMap::POSITIVE_X,
+		osg::TextureCubeMap::NEGATIVE_X,
+		osg::TextureCubeMap::POSITIVE_Y,
+		osg::TextureCubeMap::NEGATIVE_Y,
+		osg::TextureCubeMap::POSITIVE_Z,
+		osg::TextureCubeMap::NEGATIVE_Z
+	};
+	auto diffuse = osgx::make_ref<osg::TextureCubeMap>();
+
+	for(std::size_t face = 0; face < faces.size(); ++face) {
+		osg::ref_ptr<osg::Image> image;
+
+		if(!readRawRGBA32F(
+			directory / ("khronos-lambertian-m0-f" + std::to_string(face) + ".rgba32f"),
+			256,
+			256,
+			image
+		)) return false;
+
+		diffuse->setImage(faces[face], image);
+	}
+
+	diffuse->setFilter(osg::Texture::MIN_FILTER, osg::Texture::LINEAR);
+	diffuse->setFilter(osg::Texture::MAG_FILTER, osg::Texture::LINEAR);
+	diffuse->setWrap(osg::Texture::WRAP_S, osg::Texture::CLAMP_TO_EDGE);
+	diffuse->setWrap(osg::Texture::WRAP_T, osg::Texture::CLAMP_TO_EDGE);
+	diffuse->setWrap(osg::Texture::WRAP_R, osg::Texture::CLAMP_TO_EDGE);
+	diffuse->setUseHardwareMipMapGeneration(false);
+
+	osg::ref_ptr<osg::Image> lutImage;
+
+	if(!readRawRGBA32F(directory / "khronos-ggx-lut.rgba32f", 1024, 1024, lutImage)) return false;
+
+	auto lut = osgx::make_ref<osg::Texture2D>();
+
+	lut->setImage(lutImage);
+	lut->setInternalFormat(GL_RGBA32F);
+	lut->setFilter(osg::Texture::MIN_FILTER, osg::Texture::LINEAR);
+	lut->setFilter(osg::Texture::MAG_FILTER, osg::Texture::LINEAR);
+	lut->setWrap(osg::Texture::WRAP_S, osg::Texture::CLAMP_TO_EDGE);
+	lut->setWrap(osg::Texture::WRAP_T, osg::Texture::CLAMP_TO_EDGE);
+
+	ibl.diffuse = diffuse;
+	ibl.lut = lut;
+
+	return true;
+}
+
 }
 
 int main(int argc, char** argv) {
-	// Khronos requests an antialiased WebGL2 context. WebGL leaves the exact sample count to the
-	// browser; the desktop path used for these parity captures ordinarily resolves to 4x MSAA.
-	osg::DisplaySettings::instance()->setNumMultiSamples(4);
-
 	osg::ArgumentParser args(&argc, argv);
-	osgViewer::Viewer viewer(args);
 
 	args.getApplicationUsage()->setCommandLineUsage(
 		std::string(args.getApplicationName()) +
-		" <model.gltf> --ktx2 <path> --hdr <path> [--camera <camera.gltf>] [--capture <path.png>] [--debug [mode]]"
+		" <model.gltf> (--ktx2 <path> --hdr <path> | --official-ibl <dir>) [--camera <camera.gltf>] [--capture <path.png>] [--samples <count>] [--debug [mode]]"
 	);
 	args.getApplicationUsage()->addCommandLineOption(
 		"--ktx2 <path>",
@@ -192,6 +279,10 @@ int main(int argc, char** argv) {
 		"Source HDR environment (for Lambertian diffuse irradiance)"
 	);
 	args.getApplicationUsage()->addCommandLineOption(
+		"--official-ibl <directory>",
+		"Use the preserved Khronos raw diffuse/LUT assets plus khronos-ggx.ktx2 (parity harness only)"
+	);
+	args.getApplicationUsage()->addCommandLineOption(
 		"--capture <path.png>",
 		"Write the first complete framebuffer to a PNG and exit"
 	);
@@ -200,11 +291,16 @@ int main(int argc, char** argv) {
 		"Apply a Khronos Sample Viewer camera export"
 	);
 	args.getApplicationUsage()->addCommandLineOption(
+		"--samples <count>",
+		"Request this many default-framebuffer MSAA samples (default: 4)"
+	);
+	args.getApplicationUsage()->addCommandLineOption(
 		"--debug [mode]",
 		"combined, diffuse, specular, base-color, roughness, metallic, normal-texture, normal-texture-raw, geometry-normal, shading-normal, geometry-tangent, bitangent, linear-diffuse, linear-specular, or linear-combined"
 	);
 
-	std::string ktx2Path, hdrPath, cameraPath, capturePath, debugName = "combined";
+	std::string ktx2Path, hdrPath, officialIBLPath, cameraPath, capturePath, debugName = "combined";
+	int samples = 4;
 	const std::map<std::string, int> debugModes = {
 		{"combined", 0}, {"diffuse", 1}, {"specular", 2},
 		{"base-color", 3}, {"roughness", 4}, {"metallic", 5},
@@ -215,8 +311,10 @@ int main(int argc, char** argv) {
 
 	const bool haveKtx2 = args.read("--ktx2", ktx2Path);
 	const bool haveHdr = args.read("--hdr", hdrPath);
+	const bool haveOfficialIBL = args.read("--official-ibl", officialIBLPath);
 	const bool haveCamera = args.read("--camera", cameraPath);
 	const bool captureRequested = args.read("--capture", capturePath);
+	args.read("--samples", samples);
 	const int debugPos = args.find("--debug");
 	const bool diagnostics = debugPos >= 0;
 
@@ -227,11 +325,21 @@ int main(int argc, char** argv) {
 		else args.read(debugPos, "--debug");
 	}
 
-	if(args.argc() < 2 || !haveKtx2 || !haveHdr) {
+	if(args.argc() < 2 || (!haveOfficialIBL && (!haveKtx2 || !haveHdr)) || samples < 0) {
 		args.getApplicationUsage()->write(std::cerr);
 
 		return 1;
 	}
+
+	if(haveOfficialIBL) {
+		const std::filesystem::path directory(officialIBLPath);
+
+		ktx2Path = (directory / "khronos-ggx.ktx2").string();
+		hdrPath = (directory / "Cannon_Exterior.hdr").string();
+	}
+
+	osg::DisplaySettings::instance()->setNumMultiSamples(static_cast<unsigned int>(samples));
+	osgViewer::Viewer viewer(args);
 
 	// ReaderWriterGLTF registers this same alias in its own constructor, but that
 	// constructor only runs *after* the registry has already resolved which plugin
@@ -262,6 +370,23 @@ int main(int argc, char** argv) {
 		return 1;
 	}
 
+	if(haveOfficialIBL) {
+		OfficialIBL officialIBL;
+
+		if(!loadOfficialIBL(officialIBLPath, officialIBL)) return 1;
+
+		auto* stateSet = model->getOrCreateStateSet();
+
+		stateSet->setTextureAttributeAndModes(6, officialIBL.lut, osg::StateAttribute::ON);
+		stateSet->setTextureAttributeAndModes(7, officialIBL.diffuse, osg::StateAttribute::ON);
+		stateSet->getUniform("iblAxisX")->set(osg::Vec3(0.0f, 0.0f, 1.0f));
+		stateSet->getUniform("iblAxisY")->set(osg::Vec3(0.0f, 1.0f, 0.0f));
+		stateSet->getUniform("iblAxisZ")->set(osg::Vec3(-1.0f, 0.0f, 0.0f));
+		pis.lutCamera = nullptr;
+		pis.brdfLUT = officialIBL.lut;
+		pis.diffuseEnv = officialIBL.diffuse;
+	}
+
 	const auto debug = debugModes.find(debugName);
 
 	if(diagnostics && debug == debugModes.end()) {
@@ -274,7 +399,7 @@ int main(int argc, char** argv) {
 
 	auto root = osgx::make_ref<osg::Group>();
 
-	root->addChild(pis.lutCamera);
+	if(pis.lutCamera) root->addChild(pis.lutCamera);
 	root->addChild(model);
 
 	viewer.setSceneData(root);

@@ -259,6 +259,11 @@ uniform samplerCube envMap; // unit 5
 uniform sampler2D brdfLUT; // unit 6
 uniform samplerCube diffuseEnv; // unit 7
 uniform float iblIntensity;
+// Identity for normal osgGLTF environments. A viewer may override this when a prepared cube
+// declares a different lookup basis (for example, the preserved Khronos WebGL parity bundle).
+uniform vec3 iblAxisX;
+uniform vec3 iblAxisY;
+uniform vec3 iblAxisZ;
 #ifdef OSGX_PBRIBL_DIAGNOSTICS
 // Runtime isolation, ported from OpenSceneGraph.py/pyosg-khronos-viewer.py's Diagnostics
 // handler - lets a caller (see osggltf-viewer.cpp) key-toggle which term is actually
@@ -277,6 +282,9 @@ struct Lighting {
 };
 
 vec3 osgx_ZUpToGltf(vec3 d) { return vec3(d.x, d.z, -d.y); }
+vec3 osgx_OrientIBL(vec3 d) {
+	return vec3(dot(d, iblAxisX), dot(d, iblAxisY), dot(d, iblAxisZ));
+}
 vec3 osgx_LinearToSRGB(vec3 c) {
 	return mix(12.92 * c, 1.055 * pow(max(c, vec3(0.0)), vec3(1.0 / 2.4)) - 0.055,
 		step(vec3(0.0031308), c));
@@ -288,14 +296,14 @@ Lighting evaluateIBL(osgx_Material mat, vec3 N, vec3 V) {
 	vec3 N_world = invView * N;
 	vec3 V_world = invView * V;
 
-	vec3 diffuseIrradiance = osgx_LambertianIrradiance(N_world, diffuseEnv);
+	vec3 diffuseIrradiance = texture(diffuseEnv, osgx_OrientIBL(osgx_ZUpToGltf(N_world))).rgb;
 
 	// The KTX2 prefilter has a terminal level that is not part of the Khronos GGX chain.
 	// Match the reference viewer: roughness 1 selects the last filtered level, not that
 	// terminal level.
 	float maxMip = float(max(textureQueryLevels(envMap) - 2, 0));
 	vec3 R = reflect(-V_world, N_world);
-	vec3 R_gl = vec3(R.x, R.z, -R.y);
+	vec3 R_gl = osgx_OrientIBL(vec3(R.x, R.z, -R.y));
 	vec3 prefiltered = textureLod(envMap, R_gl, mat.roughness * maxMip).rgb;
 
 	// Matches pyosg-khronos-viewer.py's fresnel()/fd/fm/mix(...) exactly: two independent
@@ -472,6 +480,9 @@ PBRIBLScene createPBRIBLScene(
 	ss->addUniform(new osg::Uniform("diffuseEnv", 7));
 	ss->addUniform(new osg::Uniform("iblIntensity", iblIntensity));
 	ss->addUniform(new osg::Uniform("emissiveFactor", osg::Vec3(1.0f, 1.0f, 1.0f)));
+	ss->addUniform(new osg::Uniform("iblAxisX", osg::Vec3(1.0f, 0.0f, 0.0f)));
+	ss->addUniform(new osg::Uniform("iblAxisY", osg::Vec3(0.0f, 1.0f, 0.0f)));
+	ss->addUniform(new osg::Uniform("iblAxisZ", osg::Vec3(0.0f, 0.0f, 1.0f)));
 
 	// osgGLTF's Material helper binds the actual baseColor/normal/orm/emissive Texture2Ds to units
 	// 0-3 per geometry, but deliberately stays shader-agnostic
