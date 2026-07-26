@@ -724,6 +724,7 @@ PYBIND11_MODULE(osgGLTF, m) {
 	py::class_<osgGLTF::pbr::PBRIBLScene>(m_pbr, "PBRIBLScene")
 		.def(py::init<>())
 		.def_readwrite("lutCamera", &osgGLTF::pbr::PBRIBLScene::lutCamera)
+		.def_readwrite("diffuseBakeRoot", &osgGLTF::pbr::PBRIBLScene::diffuseBakeRoot)
 		.def_readwrite("envMap", &osgGLTF::pbr::PBRIBLScene::envMap)
 		.def_readwrite("brdfLUT", &osgGLTF::pbr::PBRIBLScene::brdfLUT)
 		.def_readwrite("diffuseEnv", &osgGLTF::pbr::PBRIBLScene::diffuseEnv)
@@ -746,7 +747,7 @@ PYBIND11_MODULE(osgGLTF, m) {
 		"lutSize"_a=1024,
 		"diagnostics"_a=false,
 		"Apply osgGLTF's optional osgx-powered PBR/IBL renderer to an already-loaded glTF node. "
-		"Add the returned lutCamera to the rendered scene graph and check valid() when either "
+		"Add the returned lutCamera and diffuseBakeRoot to the rendered scene graph and check valid() when either "
 		"asset path may be unavailable."
 	);
 

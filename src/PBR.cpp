@@ -189,7 +189,7 @@ namespace osgGLTF::pbr {
 // prototype was ~90 lines of Python + GLSL wiring; this collapses it to one C++ (and, via bindings,
 // one Python) call. A genuine C++ API first, with a separate binding in ext/osgGLTF-python.cpp.
 //
-// Uses osgx::ibl's baked Lambertian cubemap (computeLambertianCubeMap()) for diffuse IBL.
+// Uses osgx::ibl's frame-driven GPU-baked Lambertian cubemap for diffuse IBL.
 // Pixel-parity with the Khronos glTF-Sample-Viewer reference is the explicit goal here, and SH9's
 // low-frequency basis measurably washes out the high-contrast environments used by this helper.
 // SH9 remains available as an independent osgx::ibl utility for callers that prefer its compact,
@@ -245,7 +245,6 @@ const float PI = 3.14159265359;
 
 #pragma osgx::pbr MATERIAL_STRUCT, F_MULTISCATTER, TONEMAP_PBR_NEUTRAL
 #pragma osgGLTF MATERIAL_INPUTS, GET_MATERIAL, SHADING_NORMAL, EMISSIVE, ALPHA_COVERAGE
-#pragma osgx::ibl LAMBERTIAN_IRRADIANCE
 
 in vec3 vNGeom;
 in vec3 vPosition;
@@ -402,16 +401,17 @@ void main() {
 }
 
 bool PBRIBLScene::valid() const {
-	return lutCamera.valid() && envMap.valid() && brdfLUT.valid() && diffuseEnv.valid();
+	return lutCamera.valid() && diffuseBakeRoot.valid() && envMap.valid() && brdfLUT.valid() && diffuseEnv.valid();
 }
 
 // One-call "get PBR/IBL going from scratch" against an already-loaded glTF node: applies the full
 // PBR/IBL shader above (osgGLTF material glue plus generic osgx::pbr/osgx::ibl, zero
 // hand-copied GLSL), loads the prefiltered cubemap + bakes a Lambertian diffuse irradiance cubemap
-// from the given paths, bakes the BRDF LUT, and wires every uniform/texture unit the shader
-// needs. `node` is modified in place (StateSet gets the Program + uniforms, OVERRIDE'd same as
-// apply_gltf_fallback_pbr() in pyosg-voxelize.py); the caller still owns adding `node` itself and
-// the returned `lutCamera` to the scene graph. `diagnostics=false` is the production path;
+// from the given paths, builds frame-driven GPU bakes for the Lambertian diffuse cubemap and BRDF
+// LUT, and wires every uniform/texture unit the shader needs. `node` is modified in place
+// (StateSet gets the Program + uniforms, OVERRIDE'd same as apply_gltf_fallback_pbr() in
+// pyosg-voxelize.py); the caller still owns adding `node`, `lutCamera`, and `diffuseBakeRoot` to
+// the scene graph. `diagnostics=false` is the production path;
 // setting it true compiles the debug channels and creates their uniforms. The three diagnostic
 // uniform pointers are null in production.
 //
@@ -449,7 +449,10 @@ PBRIBLScene createPBRIBLScene(
 		return pis;
 	}
 
-	pis.diffuseEnv = osgx::ibl::computeLambertianCubeMap(hdrImage);
+	auto diffuseBake = osgx::ibl::createLambertianBakeScene(hdrImage);
+
+	pis.diffuseBakeRoot = diffuseBake.root;
+	pis.diffuseEnv = diffuseBake.diffuseTexture;
 
 	auto* ss = node->getOrCreateStateSet();
 

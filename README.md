@@ -117,6 +117,7 @@ target_link_libraries(my_viewer PRIVATE osgGLTF::pbr)
 auto scene = osgGLTF::pbr::createPBRIBLScene(model, ktx2Path, hdrPath);
 if(scene.valid()) {
 	root->addChild(scene.lutCamera);
+	root->addChild(scene.diffuseBakeRoot);
 	root->addChild(model);
 }
 ```

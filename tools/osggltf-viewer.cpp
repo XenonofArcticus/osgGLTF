@@ -2,8 +2,9 @@
 //
 // osgGLTF-owned viewer for its optional osgx-powered PBR/IBL renderer.
 //
-// lutCamera (returned by createPBRIBLScene) MUST be added to the scene graph or the
-// BRDF LUT never bakes; it's ABSOLUTE_RF, so it doesn't matter where.
+// lutCamera and diffuseBakeRoot (returned by createPBRIBLScene) MUST be added to the scene graph
+// or their BRDF-LUT and diffuse-irradiance passes never bake; both are ABSOLUTE_RF, so placement
+// within that graph does not matter.
 
 #include <osgGLTF/PBR.hpp>
 
@@ -383,6 +384,7 @@ int main(int argc, char** argv) {
 		stateSet->getUniform("iblAxisY")->set(osg::Vec3(0.0f, 1.0f, 0.0f));
 		stateSet->getUniform("iblAxisZ")->set(osg::Vec3(-1.0f, 0.0f, 0.0f));
 		pis.lutCamera = nullptr;
+		pis.diffuseBakeRoot = nullptr;
 		pis.brdfLUT = officialIBL.lut;
 		pis.diffuseEnv = officialIBL.diffuse;
 	}
@@ -400,6 +402,7 @@ int main(int argc, char** argv) {
 	auto root = osgx::make_ref<osg::Group>();
 
 	if(pis.lutCamera) root->addChild(pis.lutCamera);
+	if(pis.diffuseBakeRoot) root->addChild(pis.diffuseBakeRoot);
 	root->addChild(model);
 
 	viewer.setSceneData(root);
