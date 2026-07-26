@@ -48,6 +48,32 @@ set_target_properties(osgGLTF PROPERTIES
 	WINDOWS_EXPORT_ALL_SYMBOLS ON
 )
 
+add_library(osgGLTF_pbr
+	PBR.cpp
+)
+add_library(osgGLTF::pbr ALIAS osgGLTF_pbr)
+
+target_compile_features(osgGLTF_pbr PUBLIC cxx_std_20)
+osggltf_compile_options(osgGLTF_pbr)
+target_include_directories(osgGLTF_pbr PUBLIC
+	$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>
+	"$<BUILD_INTERFACE:${OPENSCENEGRAPH_INCLUDE_DIRS}>"
+	$<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>
+)
+target_sources(osgGLTF_pbr PUBLIC
+	"$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/osgGLTF/PBR.hpp>"
+)
+target_link_libraries(osgGLTF_pbr PUBLIC
+	osgGLTF::osgGLTF
+	osgx::osgx
+)
+set_target_properties(osgGLTF_pbr PROPERTIES
+	EXPORT_NAME pbr
+	OUTPUT_NAME osgGLTF-pbr
+	POSITION_INDEPENDENT_CODE ON
+	WINDOWS_EXPORT_ALL_SYMBOLS ON
+)
+
 # TinyGLTF.cpp owns the single tinygltf/STB implementation. tinygltf's bundled JSON header uses
 # the deprecated std::is_pod trait; isolate that third-party warning to these translation units.
 if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
@@ -59,7 +85,7 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
 endif()
 
 if(OSGGLTF_INSTALL)
-	install(TARGETS osgGLTF EXPORT osgGLTFTargets
+	install(TARGETS osgGLTF osgGLTF_pbr EXPORT osgGLTFTargets
 		ARCHIVE DESTINATION "${CMAKE_INSTALL_LIBDIR}"
 		LIBRARY DESTINATION "${CMAKE_INSTALL_LIBDIR}"
 		RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}"

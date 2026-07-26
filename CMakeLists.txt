@@ -137,7 +137,7 @@ if(OSGGLTF_BUILD_PYTHON)
 		"${PROJECT_SOURCE_DIR}/ext/tinygltf"
 	)
 	target_link_libraries(osgGLTF_python PRIVATE
-		osgGLTF::osgGLTF
+		osgGLTF::pbr
 		pybind11::module
 	)
 	target_compile_features(osgGLTF_python PUBLIC cxx_std_20)

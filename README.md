@@ -15,9 +15,12 @@ environment lighting behave like a modern glTF renderer should.
 
 ## Notes
 
-This code is a patched version of the [osgEarth](https://github.com/gwaldron/osgearth/tree/master/src/osgEarthDrivers/gltf)
-reference implementation. Many thanks to [Pelican
-Mapping](https://www.pelicanmapping.com/) for doing 95% of the work!
+This code **started** as a patched version of the [osgEarth](https://github.com/gwaldron/osgearth/tree/master/src/osgEarthDrivers/gltf)
+reference implementation, but has since evolved into something entirely
+different. This project has more features and Khronos parity, but will not
+(YET) properly export state that matches the osgEarth shader pipeline. It could
+be easily added if necessary, since this version defines both a "contract" (for
+custom implemenations) **as well as** a "ready-to-use" set of helper functions.
 
 Be sure and call `osgDB::Registry::instance()->addFileExtensionAlias("glb", "gltf");`
 if you want to support GLB loading easily!
@@ -28,21 +31,18 @@ A top-level build enables the KTX2 plugin, tools, examples, and installation rul
 Each optional layer can be controlled independently:
 
 - `OSGGLTF_BUILD_KTX2` builds the KTX2 osgDB plugin.
-- `OSGGLTF_BUILD_TOOLS` builds the CPU and GPU IBL-baking tools.
+- `OSGGLTF_BUILD_TOOLS` builds the viewer and CPU/GPU IBL-baking tools.
 - `OSGGLTF_BUILD_EXAMPLES` builds the examples.
 - `OSGGLTF_BUILD_PYTHON` builds the Python module.
 - `OSGGLTF_INSTALL` generates osgGLTF installation rules.
 
-The default top-level build enables `OSGGLTF_BUILD_TOOLS`, whose GPU prefilter tool links
-`osgx::osgx`. For a fresh full build, configure, build, and install osgdebug first, then make its
-installation visible while configuring osgGLTF:
+The loader consumes `osgx::core`, while the optional `osgGLTF::pbr` renderer and GPU prefilter tool
+consume the generic `osgx::osgx` PBR/IBL layer. For a fresh full build, configure, build, and
+install osgdebug first, then make its installation visible while configuring osgGLTF:
 
 ```console
 cmake -S . -B BUILD -DCMAKE_PREFIX_PATH=/path/to/osgdebug/prefix
 ```
-
-The glTF loader itself does not currently depend on osgx. A loader-only build may therefore be
-built before osgdebug by configuring with `-DOSGGLTF_BUILD_TOOLS=OFF`.
 
 Python support also requires the location of an OpenSceneGraph.py checkout:
 
@@ -99,6 +99,31 @@ emissive texture units. These helpers are optional; the named constants in the s
 used when an application needs different program or StateSet ownership.
 
 The Python bindings expose the same constants, GLSL source, and helpers under `osgGLTF.shader`.
+
+## Optional PBR/IBL Renderer
+
+`osgGLTF::pbr` applies osgGLTF's material interface using the generic facilities in `osgx::pbr`
+and `osgx::ibl`. The loader target remains shader-agnostic; applications opt into this renderer
+explicitly:
+
+```cmake
+find_package(osgGLTF CONFIG REQUIRED)
+target_link_libraries(my_viewer PRIVATE osgGLTF::pbr)
+```
+
+```cpp
+#include <osgGLTF/PBR.hpp>
+
+auto scene = osgGLTF::pbr::createPBRIBLScene(model, ktx2Path, hdrPath);
+if(scene.valid()) {
+	root->addChild(scene.lutCamera);
+	root->addChild(model);
+}
+```
+
+The material GLSL helpers are registered under `#pragma osgGLTF ...`; their canonical material
+declaration comes directly from `osgGLTF/Shader.hpp`. Python exposes the same API under
+`osgGLTF.pbr`. The `osggltf-viewer` tool is the corresponding complete C++ consumer.
 
 ## GPU GGX Prefiltering
 

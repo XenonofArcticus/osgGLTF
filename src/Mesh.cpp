@@ -159,19 +159,17 @@ osg::Group* MeshBuilder::makeMesh(const tinygltf::Mesh& mesh, int skinIdx) const
 			}
 		}
 
-		if(
-			primitive.material >= 0 &&
-			primitive.material < static_cast<int>(_model.materials.size())
-		) {
-			GLTF_NOTIFY(3) << "applyMaterial " << primitive.material << std::endl;
+		// A missing material means glTF's defined default material, not “leave
+		// whatever render state happened to be inherited.” MaterialBuilder also
+		// validates positive indices before looking them up.
+		GLTF_NOTIFY(3) << "applyMaterial " << primitive.material << std::endl;
 
-			_materialBuilder.applyMaterial(
-				primitive.material,
-				baseColorFactor,
-				geom,
-				texCoordSets
-			);
-		}
+		_materialBuilder.applyMaterial(
+			primitive.material,
+			baseColorFactor,
+			geom,
+			texCoordSets
+		);
 
 		// Fall back to a solid color if COLOR_0 is absent.
 		if(!geom->getColorArray()) {

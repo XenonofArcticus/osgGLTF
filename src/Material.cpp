@@ -49,13 +49,21 @@ void MaterialBuilder::applyMaterial(
 	osg::Geometry* geom,
 	const std::map<int, osg::Array*>& texCoordSets
 ) const {
-	if(matIdx < 0) return;
+	// A primitive without a material uses glTF's defined default material;
+	// it must still receive this loader's material UBO and alpha state.
+	// Returning early here previously left it with inherited/undefined state.
+	tinygltf::Material defaultMaterial;
+	const tinygltf::Material* material = &defaultMaterial;
 
-	const std::size_t materialIndex = static_cast<std::size_t>(matIdx);
+	if(matIdx >= 0) {
+		const std::size_t materialIndex = static_cast<std::size_t>(matIdx);
 
-	if(materialIndex >= _model.materials.size()) return;
+		if(materialIndex >= _model.materials.size()) return;
 
-	const tinygltf::Material& mat = _model.materials[materialIndex];
+		material = &_model.materials[materialIndex];
+	}
+
+	const tinygltf::Material& mat = *material;
 	const auto& pbr = mat.pbrMetallicRoughness;
 
 	// sRGB: per the glTF spec, baseColor/diffuse and emissive textures

@@ -2,6 +2,8 @@
 
 #include <osgx/Warnings.hpp>
 
+#include "osgGLTF/PBR.hpp"
+
 OSGX_DISABLE_WARNINGS
 
 #define TINYGLTF_NOEXCEPTION
@@ -667,6 +669,8 @@ osg::ref_ptr<osg::Node> readNodeFileAsync(
 
 PYBIND11_MODULE(osgGLTF, m) {
 	auto py_osg = py::module_::import("OpenSceneGraph");
+	osgGLTF::pbr::registerShaderLibs();
+
 	auto m_shader = m.def_submodule(
 		"shader",
 		"Shader inputs and setup matching the scene state populated by the osgGLTF loader"
@@ -702,6 +706,49 @@ PYBIND11_MODULE(osgGLTF, m) {
 		.def("configureProgram", &osgGLTF::shader::configureProgram, "program"_a)
 		.def("configureStateSet", &osgGLTF::shader::configureStateSet, "stateSet"_a)
 	;
+
+	auto m_pbr = m.def_submodule(
+		"pbr",
+		"Optional osgGLTF rendering using the generic osgx PBR and IBL facilities"
+	);
+
+	m_pbr.attr("GET_MATERIAL") = py::str(osgGLTF::pbr::GET_MATERIAL);
+	m_pbr.attr("SHADING_NORMAL") = py::str(osgGLTF::pbr::SHADING_NORMAL);
+	m_pbr.attr("EMISSIVE") = py::str(osgGLTF::pbr::EMISSIVE);
+	m_pbr.attr("ALPHA_COVERAGE") = py::str(osgGLTF::pbr::ALPHA_COVERAGE);
+	m_pbr.def("registerShaderLibs", &osgGLTF::pbr::registerShaderLibs);
+	m_pbr.def("resolveShaderLibs", [](const std::string& source) {
+		return osgGLTF::pbr::resolveShaderLibs(source);
+	}, "source"_a);
+
+	py::class_<osgGLTF::pbr::PBRIBLScene>(m_pbr, "PBRIBLScene")
+		.def(py::init<>())
+		.def_readwrite("lutCamera", &osgGLTF::pbr::PBRIBLScene::lutCamera)
+		.def_readwrite("envMap", &osgGLTF::pbr::PBRIBLScene::envMap)
+		.def_readwrite("brdfLUT", &osgGLTF::pbr::PBRIBLScene::brdfLUT)
+		.def_readwrite("diffuseEnv", &osgGLTF::pbr::PBRIBLScene::diffuseEnv)
+		.def_readwrite("debugMode", &osgGLTF::pbr::PBRIBLScene::debugMode)
+		.def_readwrite("disableNormalMap", &osgGLTF::pbr::PBRIBLScene::disableNormalMap)
+		.def_readwrite(
+			"disableRoughnessMap",
+			&osgGLTF::pbr::PBRIBLScene::disableRoughnessMap
+		)
+		.def("valid", &osgGLTF::pbr::PBRIBLScene::valid)
+	;
+
+	m_pbr.def(
+		"createPBRIBLScene",
+		&osgGLTF::pbr::createPBRIBLScene,
+		"node"_a,
+		"ktx2Path"_a,
+		"hdrPath"_a,
+		"iblIntensity"_a=1.0f,
+		"lutSize"_a=1024,
+		"diagnostics"_a=false,
+		"Apply osgGLTF's optional osgx-powered PBR/IBL renderer to an already-loaded glTF node. "
+		"Add the returned lutCamera to the rendered scene graph and check valid() when either "
+		"asset path may be unavailable."
+	);
 
 	py::class_<osgGLTF::SimplePlayer>(m, "SimplePlayer")
 		.def(py::init<osg::Node*>(), "model"_a)

@@ -1,3 +1,17 @@
+# osgGLTF-owned reference viewer for the optional PBR/IBL adapter.
+add_executable(osggltf-viewer
+	osggltf-viewer.cpp
+)
+
+osggltf_compile_options(osggltf-viewer)
+target_include_directories(osggltf-viewer PRIVATE
+	${PROJECT_SOURCE_DIR}/ext/tinygltf
+)
+target_link_libraries(osggltf-viewer PRIVATE
+	osgGLTF::pbr
+)
+target_compile_features(osggltf-viewer PRIVATE cxx_std_20)
+
 # GPU IBL baker: HDR equirectangular image -> GGX-prefiltered KTX2 cubemap.
 add_executable(osggltf-iblbake-gpu
 	osggltf-iblbake-gpu.cpp
@@ -33,6 +47,7 @@ endif()
 
 if(OSGGLTF_INSTALL)
 	install(TARGETS
+		osggltf-viewer
 		osggltf-iblbake-gpu
 		osggltf-iblbake-cpu
 		DESTINATION ${CMAKE_INSTALL_PREFIX}/bin
