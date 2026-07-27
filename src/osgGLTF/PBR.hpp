@@ -62,6 +62,7 @@ struct PBRIBLScene {
 	osg::ref_ptr<osg::Uniform> debugMode;
 	osg::ref_ptr<osg::Uniform> disableNormalMap;
 	osg::ref_ptr<osg::Uniform> disableRoughnessMap;
+	osg::ref_ptr<osg::Uniform> disableSpecularAA;
 
 	bool valid() const;
 };

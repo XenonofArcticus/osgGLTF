@@ -243,7 +243,7 @@ constexpr const char FULL_PBR_FRAGMENT_SHADER_SRC[] = R"GLSL(
 
 const float PI = 3.14159265359;
 
-#pragma osgx::pbr MATERIAL_STRUCT, F_MULTISCATTER, TONEMAP_PBR_NEUTRAL
+#pragma osgx::pbr MATERIAL_STRUCT, F_MULTISCATTER, SPECULAR_AA, TONEMAP_PBR_NEUTRAL
 #pragma osgGLTF MATERIAL_INPUTS, GET_MATERIAL, SHADING_NORMAL, EMISSIVE, ALPHA_COVERAGE
 
 in vec3 vNGeom;
@@ -271,6 +271,7 @@ uniform vec3 iblAxisZ;
 uniform int debugMode;
 uniform int disableNormalMap;
 uniform int disableRoughnessMap;
+uniform int disableSpecularAA;
 #endif
 
 out vec4 fragColor;
@@ -365,6 +366,19 @@ void main() {
 	vec3 bitangentWorld = normalize(cross(NgeomWorld, tangentWorld)) * vTangent.w;
 	if(debugMode == 10) { fragColor = vec4(osgx_ZUpToGltf(tangentWorld) * 0.5 + 0.5, alpha); return; }
 	if(debugMode == 11) { fragColor = vec4(osgx_ZUpToGltf(bitangentWorld) * 0.5 + 0.5, alpha); return; }
+#endif
+
+	// Widens roughness under high-curvature/low-roughness shading normals so the mirror-like
+	// reflection vector doesn't alias between neighboring fragments at low MSAA sample counts
+	// (a beveled metal trim is the motivating case - see osgx_SpecularAA). Debug channels above
+	// intentionally read mat.roughness before this so they show the authored/textured value, not
+	// the screen-space-widened one used for actual shading.
+	float aaRoughness = osgx_SpecularAA(N, mat.roughness);
+
+#ifdef OSGX_PBRIBL_DIAGNOSTICS
+	if(disableSpecularAA == 0) mat.roughness = aaRoughness;
+#else
+	mat.roughness = aaRoughness;
 #endif
 
 	Lighting ambient = evaluateIBL(mat, N, V);
@@ -500,10 +514,12 @@ PBRIBLScene createPBRIBLScene(
 		pis.debugMode = new osg::Uniform("debugMode", 0);
 		pis.disableNormalMap = new osg::Uniform("disableNormalMap", 0);
 		pis.disableRoughnessMap = new osg::Uniform("disableRoughnessMap", 0);
+		pis.disableSpecularAA = new osg::Uniform("disableSpecularAA", 0);
 
 		ss->addUniform(pis.debugMode);
 		ss->addUniform(pis.disableNormalMap);
 		ss->addUniform(pis.disableRoughnessMap);
+		ss->addUniform(pis.disableSpecularAA);
 	}
 
 	ss->setMode(GL_TEXTURE_CUBE_MAP_SEAMLESS, osg::StateAttribute::ON);

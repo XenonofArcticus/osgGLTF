@@ -35,6 +35,7 @@ OSGX_DISABLE_WARNINGS
 #include <osg/observer_ptr>
 #include <osgGA/GUIActionAdapter>
 #include <osgGA/GUIEventAdapter>
+#include <osgGA/TrackballManipulator>
 #include <osgViewer/Viewer>
 #include <osgViewer/ViewerEventHandlers>
 
@@ -405,17 +406,26 @@ int main(int argc, char** argv) {
 		1.0f
 	)); // #303542
 
-	if(haveCamera && !applyKhronosCamera(viewer.getCamera(), cameraPath)) return 1;
+	// A Khronos camera export pins an exact view matrix on the camera itself, which only
+	// sticks frame-to-frame because nothing else drives it. Installing a manipulator in that
+	// case would fight it (the manipulator's matrix wins every frame). Without --camera there
+	// was previously no manipulator at all, so the interactive viewer sat at OSG's default
+	// (near-origin, unframed) view with no mouse navigation - this is that missing wiring.
+	if(haveCamera) {
+		if(!applyKhronosCamera(viewer.getCamera(), cameraPath)) return 1;
+	}
+
+	else viewer.setCameraManipulator(new osgGA::TrackballManipulator());
 
 	// Diagnostics, ported from pyosg-khronos-viewer.py: 1/2/3 pick debugMode; N/R toggle the
 	// normal/roughness maps.
 	if(diagnostics) std::cout <<
 		"Diagnostics: 1=combined 2=diffuse 3=specular N=toggle normal map "
-		"R=toggle roughness map" << std::endl
+		"R=toggle roughness map A=toggle specular AA" << std::endl
 	;
 
 	if(diagnostics) viewer.addEventHandler(new osgx::LambdaKeyHandler(
-		{'1', '2', '3', 'n', 'N', 'r', 'R'},
+		{'1', '2', '3', 'n', 'N', 'r', 'R', 'a', 'A'},
 		[pis](const osgGA::GUIEventAdapter&, osgGA::GUIActionAdapter&, int key) {
 			switch(key) {
 				case '1': {
@@ -460,6 +470,17 @@ int main(int argc, char** argv) {
 					pis.disableRoughnessMap->set(1 - v);
 
 					std::cout << "[diagnostic] roughness map " << (v ? "on" : "off") << std::endl;
+
+					break;
+				}
+
+				case 'a': case 'A': {
+					int v = 0;
+
+					pis.disableSpecularAA->get(v);
+					pis.disableSpecularAA->set(1 - v);
+
+					std::cout << "[diagnostic] specular AA " << (v ? "on" : "off") << std::endl;
 
 					break;
 				}
