@@ -721,13 +721,18 @@ PYBIND11_MODULE(osgGLTF, m) {
 		return osgGLTF::pbr::resolveShaderLibs(source);
 	}, "source"_a);
 
+	py::class_<osgGLTF::pbr::PBRIBLEnvironment>(m_pbr, "PBRIBLEnvironment")
+		.def(py::init<>())
+		.def_readwrite("root", &osgGLTF::pbr::PBRIBLEnvironment::root)
+		.def_readwrite("envMap", &osgGLTF::pbr::PBRIBLEnvironment::envMap)
+		.def_readwrite("brdfLUT", &osgGLTF::pbr::PBRIBLEnvironment::brdfLUT)
+		.def_readwrite("diffuseEnv", &osgGLTF::pbr::PBRIBLEnvironment::diffuseEnv)
+		.def("valid", &osgGLTF::pbr::PBRIBLEnvironment::valid)
+	;
+
 	py::class_<osgGLTF::pbr::PBRIBLScene>(m_pbr, "PBRIBLScene")
 		.def(py::init<>())
-		.def_readwrite("lutCamera", &osgGLTF::pbr::PBRIBLScene::lutCamera)
-		.def_readwrite("diffuseBakeRoot", &osgGLTF::pbr::PBRIBLScene::diffuseBakeRoot)
-		.def_readwrite("envMap", &osgGLTF::pbr::PBRIBLScene::envMap)
-		.def_readwrite("brdfLUT", &osgGLTF::pbr::PBRIBLScene::brdfLUT)
-		.def_readwrite("diffuseEnv", &osgGLTF::pbr::PBRIBLScene::diffuseEnv)
+		.def_readwrite("node", &osgGLTF::pbr::PBRIBLScene::node)
 		.def_readwrite("debugMode", &osgGLTF::pbr::PBRIBLScene::debugMode)
 		.def_readwrite("disableNormalMap", &osgGLTF::pbr::PBRIBLScene::disableNormalMap)
 		.def_readwrite(
@@ -738,17 +743,22 @@ PYBIND11_MODULE(osgGLTF, m) {
 	;
 
 	m_pbr.def(
+		"preparePBRIBLEnvironment",
+		&osgGLTF::pbr::preparePBRIBLEnvironment,
+		"ktx2Path"_a,
+		"hdrPath"_a,
+		"lutSize"_a=1024,
+		"Load and prepare reusable PBR IBL resources. Add root to the rendered scene graph so its "
+		"PRE_RENDER passes can populate the generated textures."
+	);
+	m_pbr.def(
 		"createPBRIBLScene",
 		&osgGLTF::pbr::createPBRIBLScene,
 		"node"_a,
-		"ktx2Path"_a,
-		"hdrPath"_a,
+		"environment"_a,
 		"iblIntensity"_a=1.0f,
-		"lutSize"_a=1024,
 		"diagnostics"_a=false,
-		"Apply osgGLTF's optional osgx-powered PBR/IBL renderer to an already-loaded glTF node. "
-		"Add the returned lutCamera and diffuseBakeRoot to the rendered scene graph and check valid() when either "
-		"asset path may be unavailable."
+		"Apply osgGLTF's optional osgx-powered PBR/IBL renderer using prepared resources."
 	);
 
 	py::class_<osgGLTF::SimplePlayer>(m, "SimplePlayer")

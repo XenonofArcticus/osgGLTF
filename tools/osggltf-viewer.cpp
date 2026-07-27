@@ -2,14 +2,15 @@
 //
 // osgGLTF-owned viewer for its optional osgx-powered PBR/IBL renderer.
 //
-// lutCamera and diffuseBakeRoot (returned by createPBRIBLScene) MUST be added to the scene graph
-// or their BRDF-LUT and diffuse-irradiance passes never bake; both are ABSOLUTE_RF, so placement
-// within that graph does not matter.
+// A generated PBRIBLEnvironment root MUST be added to the scene graph or its BRDF-LUT and
+// diffuse-irradiance passes never bake; both are ABSOLUTE_RF, so placement within that graph does
+// not matter.
 
 #include <osgGLTF/PBR.hpp>
 
 #include <osgx/Callbacks.hpp>
 #include <osgx/Core.hpp>
+#include <osgx/IBL.hpp>
 #include <osgx/Warnings.hpp>
 
 OSGX_DISABLE_WARNINGS
@@ -332,13 +333,6 @@ int main(int argc, char** argv) {
 		return 1;
 	}
 
-	if(haveOfficialIBL) {
-		const std::filesystem::path directory(officialIBLPath);
-
-		ktx2Path = (directory / "khronos-ggx.ktx2").string();
-		hdrPath = (directory / "Cannon_Exterior.hdr").string();
-	}
-
 	osg::DisplaySettings::instance()->setNumMultiSamples(static_cast<unsigned int>(samples));
 	osgViewer::Viewer viewer(args);
 
@@ -356,38 +350,36 @@ int main(int argc, char** argv) {
 		return 1;
 	}
 
-	auto pis = osgGLTF::pbr::createPBRIBLScene(
-		model,
-		ktx2Path,
-		hdrPath,
-		1.0f,
-		1024,
-		diagnostics
-	);
-
-	if(!pis.valid()) {
-		std::cerr << "createPBRIBLScene failed to load " << ktx2Path << " / " << hdrPath << std::endl;
-
-		return 1;
-	}
+	osgGLTF::pbr::PBRIBLEnvironment environment;
 
 	if(haveOfficialIBL) {
 		OfficialIBL officialIBL;
 
 		if(!loadOfficialIBL(officialIBLPath, officialIBL)) return 1;
 
-		auto* stateSet = model->getOrCreateStateSet();
+		const std::filesystem::path directory(officialIBLPath);
 
-		stateSet->setTextureAttributeAndModes(6, officialIBL.lut, osg::StateAttribute::ON);
-		stateSet->setTextureAttributeAndModes(7, officialIBL.diffuse, osg::StateAttribute::ON);
-		stateSet->getUniform("iblAxisX")->set(osg::Vec3(0.0f, 0.0f, 1.0f));
-		stateSet->getUniform("iblAxisY")->set(osg::Vec3(0.0f, 1.0f, 0.0f));
-		stateSet->getUniform("iblAxisZ")->set(osg::Vec3(-1.0f, 0.0f, 0.0f));
-		pis.lutCamera = nullptr;
-		pis.diffuseBakeRoot = nullptr;
-		pis.brdfLUT = officialIBL.lut;
-		pis.diffuseEnv = officialIBL.diffuse;
+		environment.envMap = osgx::ibl::loadPrefilterCubemap((directory / "khronos-ggx.ktx2").string());
+		environment.brdfLUT = officialIBL.lut;
+		environment.diffuseEnv = officialIBL.diffuse;
+		environment.iblAxisX.set(0.0f, 0.0f, 1.0f);
+		environment.iblAxisY.set(0.0f, 1.0f, 0.0f);
+		environment.iblAxisZ.set(-1.0f, 0.0f, 0.0f);
 	}
+
+	else {
+		environment = osgGLTF::pbr::preparePBRIBLEnvironment(ktx2Path, hdrPath, 1024);
+	}
+
+	if(!environment.valid()) {
+		std::cerr << "Failed to prepare PBR IBL resources" << std::endl;
+
+		return 1;
+	}
+
+	auto pis = osgGLTF::pbr::createPBRIBLScene(model, environment, 1.0f, diagnostics);
+
+	if(!pis.valid()) return 1;
 
 	const auto debug = debugModes.find(debugName);
 
@@ -401,8 +393,7 @@ int main(int argc, char** argv) {
 
 	auto root = osgx::make_ref<osg::Group>();
 
-	if(pis.lutCamera) root->addChild(pis.lutCamera);
-	if(pis.diffuseBakeRoot) root->addChild(pis.diffuseBakeRoot);
+	if(environment.root) root->addChild(environment.root);
 	root->addChild(model);
 
 	viewer.setSceneData(root);

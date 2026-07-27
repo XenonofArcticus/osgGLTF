@@ -114,11 +114,12 @@ target_link_libraries(my_viewer PRIVATE osgGLTF::pbr)
 ```cpp
 #include <osgGLTF/PBR.hpp>
 
-auto scene = osgGLTF::pbr::createPBRIBLScene(model, ktx2Path, hdrPath);
-if(scene.valid()) {
-	root->addChild(scene.lutCamera);
-	root->addChild(scene.diffuseBakeRoot);
-	root->addChild(model);
+auto environment = osgGLTF::pbr::preparePBRIBLEnvironment(ktx2Path, hdrPath);
+auto scene = osgGLTF::pbr::createPBRIBLScene(model, environment);
+
+if(environment.valid() && scene.valid()) {
+	root->addChild(environment.root);
+	root->addChild(scene.node);
 }
 ```
 

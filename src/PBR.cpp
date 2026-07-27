@@ -258,8 +258,8 @@ uniform samplerCube envMap; // unit 5
 uniform sampler2D brdfLUT; // unit 6
 uniform samplerCube diffuseEnv; // unit 7
 uniform float iblIntensity;
-// Identity for normal osgGLTF environments. A viewer may override this when a prepared cube
-// declares a different lookup basis (for example, the preserved Khronos WebGL parity bundle).
+// KTX/OpenGL cubemap lookup basis. A prepared environment may override this for a legacy or
+// application-specific cube convention.
 uniform vec3 iblAxisX;
 uniform vec3 iblAxisY;
 uniform vec3 iblAxisZ;
@@ -400,9 +400,11 @@ void main() {
 
 }
 
-bool PBRIBLScene::valid() const {
-	return lutCamera.valid() && diffuseBakeRoot.valid() && envMap.valid() && brdfLUT.valid() && diffuseEnv.valid();
+bool PBRIBLEnvironment::valid() const {
+	return envMap.valid() && brdfLUT.valid() && diffuseEnv.valid();
 }
+
+bool PBRIBLScene::valid() const { return node.valid(); }
 
 // One-call "get PBR/IBL going from scratch" against an already-loaded glTF node: applies the full
 // PBR/IBL shader above (osgGLTF material glue plus generic osgx::pbr/osgx::ibl, zero
@@ -410,49 +412,46 @@ bool PBRIBLScene::valid() const {
 // from the given paths, builds frame-driven GPU bakes for the Lambertian diffuse cubemap and BRDF
 // LUT, and wires every uniform/texture unit the shader needs. `node` is modified in place
 // (StateSet gets the Program + uniforms, OVERRIDE'd same as apply_gltf_fallback_pbr() in
-// pyosg-voxelize.py); the caller still owns adding `node`, `lutCamera`, and `diffuseBakeRoot` to
-// the scene graph. `diagnostics=false` is the production path;
+// pyosg-voxelize.py); the caller owns adding the prepared environment root and returned scene
+// node to the graph. `diagnostics=false` is the production path;
 // setting it true compiles the debug channels and creates their uniforms. The three diagnostic
 // uniform pointers are null in production.
 //
-PBRIBLScene createPBRIBLScene(
-	osg::Node* node,
+PBRIBLEnvironment preparePBRIBLEnvironment(
 	const std::string& ktx2Path,
 	const std::string& hdrPath,
+	int lutSize
+) {
+	PBRIBLEnvironment environment;
+
+	environment.envMap = osgx::ibl::loadPrefilterCubemap(ktx2Path);
+	if(!environment.envMap) return environment;
+	environment.envMap->setUseHardwareMipMapGeneration(false);
+	environment.brdfLUT = osgx::make_ref<osg::Texture2D>();
+	environment.lutCamera = osgx::ibl::makeBRDFLUTCamera(lutSize, environment.brdfLUT);
+	auto hdrImage = osgDB::readRefImageFile(hdrPath);
+	if(!hdrImage) return environment;
+	auto diffuseBake = osgx::ibl::createLambertianBakeScene(hdrImage);
+	environment.diffuseBakeRoot = diffuseBake.root;
+	environment.diffuseEnv = diffuseBake.diffuseTexture;
+	environment.root = osgx::make_ref<osg::Group>();
+	environment.root->addChild(environment.lutCamera);
+	environment.root->addChild(environment.diffuseBakeRoot);
+	return environment;
+}
+
+PBRIBLScene createPBRIBLScene(
+	osg::Node* node,
+	const PBRIBLEnvironment& environment,
 	float iblIntensity,
-	int lutSize,
 	bool diagnostics
 ) {
 	// osgGLTF::pbr::resolveShaderLibs() below idempotently registers the generic osgx catalogs and
 	// this component's glTF catalog before expansion. This keeps the one-call helper independent of
 	// module-import order and avoids handing raw, uncompilable pragma text to the driver.
 	PBRIBLScene pis;
-
-	pis.envMap = osgx::ibl::loadPrefilterCubemap(ktx2Path);
-
-	if(!pis.envMap) return pis;
-
-	pis.envMap->setUseHardwareMipMapGeneration(false);
-
-	pis.brdfLUT = osgx::make_ref<osg::Texture2D>();
-	pis.lutCamera = osgx::ibl::makeBRDFLUTCamera(lutSize, pis.brdfLUT);
-
-	osg::ref_ptr<osg::Image> hdrImage = osgDB::readRefImageFile(hdrPath);
-
-	if(!hdrImage) {
-		OSG_WARN << "osgGLTF::pbr::createPBRIBLScene: failed to load " << hdrPath << std::endl;
-
-		pis.envMap = nullptr;
-		pis.brdfLUT = nullptr;
-		pis.lutCamera = nullptr;
-
-		return pis;
-	}
-
-	auto diffuseBake = osgx::ibl::createLambertianBakeScene(hdrImage);
-
-	pis.diffuseBakeRoot = diffuseBake.root;
-	pis.diffuseEnv = diffuseBake.diffuseTexture;
+	if(!node || !environment.valid()) return pis;
+	pis.node = node;
 
 	auto* ss = node->getOrCreateStateSet();
 
@@ -475,17 +474,17 @@ PBRIBLScene createPBRIBLScene(
 	if(diagnostics) ss->setDefine("OSGX_PBRIBL_DIAGNOSTICS");
 
 	ss->setAttributeAndModes(prog, osg::StateAttribute::ON | osg::StateAttribute::OVERRIDE);
-	ss->setTextureAttributeAndModes(5, pis.envMap, osg::StateAttribute::ON);
-	ss->setTextureAttributeAndModes(6, pis.brdfLUT, osg::StateAttribute::ON);
-	ss->setTextureAttributeAndModes(7, pis.diffuseEnv, osg::StateAttribute::ON);
+	ss->setTextureAttributeAndModes(5, environment.envMap, osg::StateAttribute::ON);
+	ss->setTextureAttributeAndModes(6, environment.brdfLUT, osg::StateAttribute::ON);
+	ss->setTextureAttributeAndModes(7, environment.diffuseEnv, osg::StateAttribute::ON);
 	ss->addUniform(new osg::Uniform("envMap", 5));
 	ss->addUniform(new osg::Uniform("brdfLUT", 6));
 	ss->addUniform(new osg::Uniform("diffuseEnv", 7));
 	ss->addUniform(new osg::Uniform("iblIntensity", iblIntensity));
 	ss->addUniform(new osg::Uniform("emissiveFactor", osg::Vec3(1.0f, 1.0f, 1.0f)));
-	ss->addUniform(new osg::Uniform("iblAxisX", osg::Vec3(1.0f, 0.0f, 0.0f)));
-	ss->addUniform(new osg::Uniform("iblAxisY", osg::Vec3(0.0f, 1.0f, 0.0f)));
-	ss->addUniform(new osg::Uniform("iblAxisZ", osg::Vec3(0.0f, 0.0f, 1.0f)));
+	ss->addUniform(new osg::Uniform("iblAxisX", environment.iblAxisX));
+	ss->addUniform(new osg::Uniform("iblAxisY", environment.iblAxisY));
+	ss->addUniform(new osg::Uniform("iblAxisZ", environment.iblAxisZ));
 
 	// osgGLTF's Material helper binds the actual baseColor/normal/orm/emissive Texture2Ds to units
 	// 0-3 per geometry, but deliberately stays shader-agnostic
