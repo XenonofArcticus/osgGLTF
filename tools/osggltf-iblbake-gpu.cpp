@@ -35,7 +35,8 @@ void configureIBLGLContext() {
 int main(int argc, char* argv[]) {
 	if(argc < 3) {
 		OSG_WARN
-			<< "Usage: osggltf-iblbake-gpu <input.hdr> <output.ktx2> [--prefilter-size N]"
+			<< "Usage: osggltf-iblbake-gpu <input.hdr> <output.ktx2> "
+			<< "[--prefilter-size N] [--samples N]"
 			<< std::endl
 		;
 
@@ -53,6 +54,11 @@ int main(int argc, char* argv[]) {
 		if(arg == "--prefilter-size" && i + 1 < argc) {
 			i++;
 			options.prefilterSize = std::atoi(argv[i]);
+		}
+
+		else if(arg == "--samples" && i + 1 < argc) {
+			i++;
+			options.sampleCount = std::atoi(argv[i]);
 		}
 	}
 

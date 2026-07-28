@@ -44,6 +44,9 @@ struct PBRIBLEnvironment {
 	osg::ref_ptr<osg::Group> root;
 	osg::ref_ptr<osg::Camera> lutCamera;
 	osg::ref_ptr<osg::Group> diffuseBakeRoot;
+	// Only present when the specular cubemap came from preparePBRIBLEnvironment(hdrPath, ...) --
+	// the pre-baked-KTX2 overload has no bake to drive and leaves this null.
+	osg::ref_ptr<osg::Group> specularBakeRoot;
 	osg::ref_ptr<osg::TextureCubeMap> envMap;
 	osg::ref_ptr<osg::Texture2D> brdfLUT;
 	osg::ref_ptr<osg::TextureCubeMap> diffuseEnv;
@@ -55,7 +58,17 @@ struct PBRIBLEnvironment {
 	bool valid() const;
 };
 
+// Pre-baked specular path: loads a finished GGX-prefiltered KTX2 from disk, still bakes diffuse
+// irradiance and the BRDF LUT live from `hdrPath`. Kept for the Khronos-parity harness and for
+// callers with an existing offline `osggltf-iblbake-gpu` bake to reuse.
 PBRIBLEnvironment preparePBRIBLEnvironment(const std::string& ktx2Path, const std::string& hdrPath, int lutSize=1024);
+
+// Fully dynamic path: bakes the GGX-prefiltered specular cubemap live, in memory, from `hdrPath`
+// alone -- the same osgx::ibl::createGGXPrefilterScene() workflow osggltf-iblbake-gpu already
+// wraps to write a KTX2 to disk, called directly instead of round-tripping through a file. Frame-
+// driven like the existing diffuse/LUT bakes: envMap is a valid, bindable texture immediately, but
+// its contents only become correct once specularBakeRoot's passes have actually run a few frames.
+PBRIBLEnvironment preparePBRIBLEnvironment(const std::string& hdrPath, int lutSize=1024);
 
 struct PBRIBLScene {
 	osg::ref_ptr<osg::Node> node;

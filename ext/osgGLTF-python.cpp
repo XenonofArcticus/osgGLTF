@@ -739,16 +739,34 @@ PYBIND11_MODULE(osgGLTF, m) {
 			"disableRoughnessMap",
 			&osgGLTF::pbr::PBRIBLScene::disableRoughnessMap
 		)
+		.def_readwrite(
+			"disableSpecularAA",
+			&osgGLTF::pbr::PBRIBLScene::disableSpecularAA
+		)
 		.def("valid", &osgGLTF::pbr::PBRIBLScene::valid)
 	;
 
 	m_pbr.def(
 		"preparePBRIBLEnvironment",
-		&osgGLTF::pbr::preparePBRIBLEnvironment,
+		py::overload_cast<const std::string&, const std::string&, int>(
+			&osgGLTF::pbr::preparePBRIBLEnvironment
+		),
 		"ktx2Path"_a,
 		"hdrPath"_a,
 		"lutSize"_a=1024,
-		"Load and prepare reusable PBR IBL resources. Add root to the rendered scene graph so its "
+		"Load a pre-baked specular cubemap from ktx2Path; bake diffuse irradiance and the BRDF LUT "
+		"live from hdrPath. Add root to the rendered scene graph so its PRE_RENDER passes can "
+		"populate the generated textures."
+	);
+	m_pbr.def(
+		"preparePBRIBLEnvironment",
+		py::overload_cast<const std::string&, int>(
+			&osgGLTF::pbr::preparePBRIBLEnvironment
+		),
+		"hdrPath"_a,
+		"lutSize"_a=1024,
+		"Bake diffuse irradiance, the BRDF LUT, and GGX-prefiltered specular all live from hdrPath "
+		"alone -- no pre-baked KTX2 required. Add root to the rendered scene graph so its "
 		"PRE_RENDER passes can populate the generated textures."
 	);
 	m_pbr.def(

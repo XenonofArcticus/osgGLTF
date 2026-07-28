@@ -1,6 +1,7 @@
 #include "osgGLTF/PBR.hpp"
 #include "osgGLTF/Shader.hpp"
 
+#include <osgx/GGXPrefilter.hpp>
 #include <osgx/IBL.hpp>
 #include <osgx/PBR.hpp>
 
@@ -451,6 +452,53 @@ PBRIBLEnvironment preparePBRIBLEnvironment(
 	environment.root = osgx::make_ref<osg::Group>();
 	environment.root->addChild(environment.lutCamera);
 	environment.root->addChild(environment.diffuseBakeRoot);
+	return environment;
+}
+
+// Fully dynamic overload: bakes the GGX-prefiltered specular cubemap live instead of loading one
+// from a KTX2 file, calling the exact same osgx::ibl::createGGXPrefilterScene() workflow
+// osggltf-iblbake-gpu already wraps to write that KTX2 to disk in the first place -- no readback,
+// no CPU round-trip, no temporary file. GGXPrefilterScene::prefilterTexture is the live render-
+// target cubemap the bake's PRE_RENDER passes write into; it is immediately valid to bind (same
+// contract as the existing Lambertian diffuseEnv below), it just isn't correct until
+// specularBakeRoot's passes have actually run a few frames of whatever viewer the caller adds
+// environment.root to. GGXPrefilterReadback (glFinish-gated CPU readback) is deliberately unused
+// here -- that machinery exists only for osggltf-iblbake-gpu's serialize-to-KTX2 use case.
+//
+// prefilterSize=256 matches what this session's Khronos-parity comparisons actually validated
+// (GGXPrefilterOptions's own default of 128 has not been checked against the reference); revisit
+// once the mip-count/roughness-convention options from TODO.md's "Generic osgx and IBL later work"
+// land; and see that same TODO entry for what is deliberately NOT yet handled here (a not-ready-
+// yet texture read is undefined driver contents, not a defined placeholder value).
+PBRIBLEnvironment preparePBRIBLEnvironment(const std::string& hdrPath, int lutSize) {
+	PBRIBLEnvironment environment;
+
+	auto hdrImage = osgDB::readRefImageFile(hdrPath);
+
+	if(!hdrImage) return environment;
+
+	environment.brdfLUT = osgx::make_ref<osg::Texture2D>();
+	environment.lutCamera = osgx::ibl::makeBRDFLUTCamera(lutSize, environment.brdfLUT);
+
+	auto diffuseBake = osgx::ibl::createLambertianBakeScene(hdrImage);
+
+	environment.diffuseBakeRoot = diffuseBake.root;
+	environment.diffuseEnv = diffuseBake.diffuseTexture;
+
+	osgx::ibl::GGXPrefilterOptions specularOptions;
+
+	specularOptions.prefilterSize = 256;
+
+	auto specularBake = osgx::ibl::createGGXPrefilterScene(hdrImage, specularOptions);
+
+	environment.specularBakeRoot = specularBake.root;
+	environment.envMap = specularBake.prefilterTexture;
+
+	environment.root = osgx::make_ref<osg::Group>();
+	environment.root->addChild(environment.lutCamera);
+	environment.root->addChild(environment.diffuseBakeRoot);
+	environment.root->addChild(environment.specularBakeRoot);
+
 	return environment;
 }
 

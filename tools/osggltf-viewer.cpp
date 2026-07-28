@@ -271,15 +271,17 @@ int main(int argc, char** argv) {
 
 	args.getApplicationUsage()->setCommandLineUsage(
 		std::string(args.getApplicationName()) +
-		" <model.gltf> (--ktx2 <path> --hdr <path> | --official-ibl <dir>) [--camera <camera.gltf>] [--capture <path.png>] [--samples <count>] [--debug [mode]]"
-	);
-	args.getApplicationUsage()->addCommandLineOption(
-		"--ktx2 <path>",
-		"Pre-filtered environment cubemap"
+		" <model.gltf> (--hdr <path> [--ktx2 <path>] | --official-ibl <dir>) [--camera <camera.gltf>] [--capture <path.png>] [--samples <count>] [--debug [mode]]"
 	);
 	args.getApplicationUsage()->addCommandLineOption(
 		"--hdr <path>",
-		"Source HDR environment (for Lambertian diffuse irradiance)"
+		"Source HDR environment. Alone, bakes diffuse irradiance, BRDF LUT, and GGX-prefiltered "
+		"specular all live from this one file. Pair with --ktx2 to load a pre-baked specular "
+		"cubemap instead of baking it."
+	);
+	args.getApplicationUsage()->addCommandLineOption(
+		"--ktx2 <path>",
+		"Pre-filtered specular environment cubemap (requires --hdr; overrides live GGX baking)"
 	);
 	args.getApplicationUsage()->addCommandLineOption(
 		"--official-ibl <directory>",
@@ -328,7 +330,7 @@ int main(int argc, char** argv) {
 		else args.read(debugPos, "--debug");
 	}
 
-	if(args.argc() < 2 || (!haveOfficialIBL && (!haveKtx2 || !haveHdr)) || samples < 0) {
+	if(args.argc() < 2 || (!haveOfficialIBL && !haveHdr) || samples < 0) {
 		args.getApplicationUsage()->write(std::cerr);
 
 		return 1;
@@ -368,8 +370,12 @@ int main(int argc, char** argv) {
 		environment.iblAxisZ.set(-1.0f, 0.0f, 0.0f);
 	}
 
-	else {
+	else if(haveKtx2) {
 		environment = osgGLTF::pbr::preparePBRIBLEnvironment(ktx2Path, hdrPath, 1024);
+	}
+
+	else {
+		environment = osgGLTF::pbr::preparePBRIBLEnvironment(hdrPath, 1024);
 	}
 
 	if(!environment.valid()) {
