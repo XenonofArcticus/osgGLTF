@@ -73,6 +73,11 @@ inline void configureProgram(osg::Program& program) {
 	program.addBindAttribLocation(TANGENT_ATTRIBUTE_NAME, TANGENT_ATTRIBUTE);
 	program.addBindAttribLocation(JOINT_INDICES_ATTRIBUTE_NAME, JOINT_INDICES_ATTRIBUTE);
 	program.addBindAttribLocation(JOINT_WEIGHTS_ATTRIBUTE_NAME, JOINT_WEIGHTS_ATTRIBUTE);
+	// MATERIAL_INPUTS already hardcodes `layout(std140, binding = 0)` in GLSL, which GL 4.6
+	// honors directly -- this call doesn't change what binding is actually used, only silences
+	// OSG's own "uniform block ... has no binding" warning (Program.cpp checks its own separate
+	// C++-side registry, populated only via this call, regardless of what the shader source says).
+	program.addBindUniformBlock("osgGLTF_Material", MATERIAL_UBO_BINDING);
 }
 
 inline void configureStateSet(osg::StateSet& stateSet) {

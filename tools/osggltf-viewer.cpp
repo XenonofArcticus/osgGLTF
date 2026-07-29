@@ -271,7 +271,7 @@ int main(int argc, char** argv) {
 
 	args.getApplicationUsage()->setCommandLineUsage(
 		std::string(args.getApplicationName()) +
-		" <model.gltf> (--hdr <path> [--ktx2 <path>] | --official-ibl <dir>) [--camera <camera.gltf>] [--capture <path.png>] [--samples <count>] [--debug [mode]]"
+		" <model.gltf> (--hdr <path> [--ktx2 <path>] | --env <manifest.gltf> | --official-ibl <dir>) [--camera <camera.gltf>] [--capture <path.png>] [--samples <count>] [--debug [mode]]"
 	);
 	args.getApplicationUsage()->addCommandLineOption(
 		"--hdr <path>",
@@ -282,6 +282,11 @@ int main(int argc, char** argv) {
 	args.getApplicationUsage()->addCommandLineOption(
 		"--ktx2 <path>",
 		"Pre-filtered specular environment cubemap (requires --hdr; overrides live GGX baking)"
+	);
+	args.getApplicationUsage()->addCommandLineOption(
+		"--env <manifest.gltf>",
+		"Static/shipping path: an osgx_pbribl manifest referencing pre-baked specular/diffuse KTX2 "
+		"cubemaps and a BRDF LUT image. No HDR decode or bake at runtime at all."
 	);
 	args.getApplicationUsage()->addCommandLineOption(
 		"--official-ibl <directory>",
@@ -304,7 +309,7 @@ int main(int argc, char** argv) {
 		"combined, diffuse, specular, base-color, roughness, metallic, normal-texture, normal-texture-raw, geometry-normal, shading-normal, geometry-tangent, bitangent, linear-diffuse, linear-specular, or linear-combined"
 	);
 
-	std::string ktx2Path, hdrPath, officialIBLPath, cameraPath, capturePath, debugName = "combined";
+	std::string ktx2Path, hdrPath, envPath, officialIBLPath, cameraPath, capturePath, debugName = "combined";
 	int samples = 4;
 	const std::map<std::string, int> debugModes = {
 		{"combined", 0}, {"diffuse", 1}, {"specular", 2},
@@ -316,6 +321,7 @@ int main(int argc, char** argv) {
 
 	const bool haveKtx2 = args.read("--ktx2", ktx2Path);
 	const bool haveHdr = args.read("--hdr", hdrPath);
+	const bool haveEnv = args.read("--env", envPath);
 	const bool haveOfficialIBL = args.read("--official-ibl", officialIBLPath);
 	const bool haveCamera = args.read("--camera", cameraPath);
 	const bool captureRequested = args.read("--capture", capturePath);
@@ -330,7 +336,7 @@ int main(int argc, char** argv) {
 		else args.read(debugPos, "--debug");
 	}
 
-	if(args.argc() < 2 || (!haveOfficialIBL && !haveHdr) || samples < 0) {
+	if(args.argc() < 2 || (!haveOfficialIBL && !haveHdr && !haveEnv) || samples < 0) {
 		args.getApplicationUsage()->write(std::cerr);
 
 		return 1;
@@ -368,6 +374,10 @@ int main(int argc, char** argv) {
 		environment.iblAxisX.set(0.0f, 0.0f, 1.0f);
 		environment.iblAxisY.set(0.0f, 1.0f, 0.0f);
 		environment.iblAxisZ.set(-1.0f, 0.0f, 0.0f);
+	}
+
+	else if(haveEnv) {
+		environment = osgGLTF::pbr::loadPBRIBLEnvironment(envPath);
 	}
 
 	else if(haveKtx2) {

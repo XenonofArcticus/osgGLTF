@@ -296,7 +296,14 @@ public:
 				texcm->setImage(f, img);
 			}
 
-			texcm->setFilter(osg::Texture::MIN_FILTER, osg::Texture::LINEAR_MIPMAP_LINEAR);
+			// A texture whose minification filter demands mipmaps but doesn't have a complete
+			// chain is "mipmap incomplete" per the GL spec, and sampling it is defined to return
+			// black -- LINEAR_MIPMAP_LINEAR is only correct here when the KTX2 actually stored a
+			// real chain (e.g. GGX's per-roughness levels), not for a single-level cube (e.g. the
+			// Lambertian diffuse bake, which has no roughness levels to begin with).
+			const bool hasMips = ktx->numLevels > 1;
+
+			texcm->setFilter(osg::Texture::MIN_FILTER, hasMips ? osg::Texture::LINEAR_MIPMAP_LINEAR : osg::Texture::LINEAR);
 			texcm->setFilter(osg::Texture::MAG_FILTER, osg::Texture::LINEAR);
 			texcm->setWrap(osg::Texture::WRAP_S, osg::Texture::CLAMP_TO_EDGE);
 			texcm->setWrap(osg::Texture::WRAP_T, osg::Texture::CLAMP_TO_EDGE);

@@ -17,8 +17,13 @@ OSGX_ENABLE_WARNINGS
 
 #include <string>
 #include <string_view>
+#include <vector>
 
 #include <osgx/LambertianBake.hpp>
+
+// Forward declaration only -- keeps tinygltf's header out of this public header's include list.
+// Only PBR.cpp, which implements decodeIBLEnvironments(), needs the real definition.
+namespace tinygltf { class Value; }
 
 namespace osgGLTF::pbr {
 
@@ -69,6 +74,50 @@ PBRIBLEnvironment preparePBRIBLEnvironment(const std::string& ktx2Path, const st
 // driven like the existing diffuse/LUT bakes: envMap is a valid, bindable texture immediately, but
 // its contents only become correct once specularBakeRoot's passes have actually run a few frames.
 PBRIBLEnvironment preparePBRIBLEnvironment(const std::string& hdrPath, int lutSize=1024);
+
+// One `environments[]` entry decoded from an `osgx_pbribl` glTF extension block (see
+// ~/dev/osgdebug/TODO.md section 2b for the manifest schema this mirrors). Pure data: no textures,
+// no I/O. `uri` is exactly what the manifest declared -- relative, resolving it (osgx::findDataFile
+// et al.) and loading/baking the result is the caller's job.
+struct IBLEnvironmentManifest {
+	struct Resource {
+		std::string uri;
+
+		bool valid() const { return !uri.empty(); }
+	};
+
+	// Only `specular` carries bake-convention parameters today; see the GGXPrefilterOptions
+	// discussion in osgdebug/TODO.md for why diffuse/brdfLUT don't need equivalents yet.
+	struct SpecularResource: Resource {
+		int prefilterSize = 0;
+		int lowestMipLevel = 0;
+	};
+
+	SpecularResource specular;
+	Resource diffuse;
+	Resource brdfLUT;
+};
+
+// Decodes every `environments[]` entry out of an `osgx_pbribl` extension block. `extensionValue`
+// is whatever `tinygltf::Model::extensions.at("osgx_pbribl")` returns -- tinygltf parses the root
+// `extensions` block through the same generic path whether it came from a minimal standalone
+// manifest document or a real asset's own embedded extension, so this one function covers both.
+std::vector<IBLEnvironmentManifest> decodeIBLEnvironments(const tinygltf::Value& extensionValue);
+
+// Fully static/pre-baked path: loads all three IBL resources from disk with NO HDR decode/bake at
+// runtime at all -- specular + diffuse cubemaps as KTX2, BRDF LUT as a plain image wrapped into a
+// Texture2D (see osggltf-iblbake-gpu's --brdf-lut-only mode for why the LUT was never an HDR-
+// derived output). This is the TODO.md 2b "--env <environment.json>" shipping path. The returned
+// PBRIBLEnvironment has no bake root at all -- there is nothing left to bake, matching the struct's
+// own "pre-baked resources... can leave it null" contract. `manifest`'s relative URIs resolve
+// against `baseDir` (normally the manifest document's own directory).
+PBRIBLEnvironment loadPBRIBLEnvironment(const IBLEnvironmentManifest& manifest, const std::string& baseDir);
+
+// Convenience overload: loads `manifestPath` as a glTF document -- a minimal standalone manifest or
+// a real asset's own embedded osgx_pbribl block both work identically, see decodeIBLEnvironments()
+// -- decodes its first declared environment, and resolves that environment's resources relative to
+// the manifest file's own directory.
+PBRIBLEnvironment loadPBRIBLEnvironment(const std::string& manifestPath);
 
 struct PBRIBLScene {
 	osg::ref_ptr<osg::Node> node;

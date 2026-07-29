@@ -55,10 +55,13 @@ add_library(osgGLTF::pbr ALIAS osgGLTF_pbr)
 
 target_compile_features(osgGLTF_pbr PUBLIC cxx_std_20)
 osggltf_compile_options(osgGLTF_pbr)
-target_include_directories(osgGLTF_pbr PUBLIC
-	$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>
-	"$<BUILD_INTERFACE:${OPENSCENEGRAPH_INCLUDE_DIRS}>"
-	$<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>
+target_include_directories(osgGLTF_pbr
+	PUBLIC
+		$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>
+		"$<BUILD_INTERFACE:${OPENSCENEGRAPH_INCLUDE_DIRS}>"
+		$<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>
+	PRIVATE
+		${PROJECT_SOURCE_DIR}/ext/tinygltf
 )
 target_sources(osgGLTF_pbr PUBLIC
 	"$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/osgGLTF/PBR.hpp>"
@@ -78,7 +81,7 @@ set_target_properties(osgGLTF_pbr PROPERTIES
 # the deprecated std::is_pod trait; isolate that third-party warning to these translation units.
 if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
 	set_source_files_properties(
-		Accessor.cpp Animation.cpp Material.cpp Mesh.cpp Reader.cpp ReaderImpl.cpp Scene.cpp Skin.cpp Texture.cpp TinyGLTF.cpp
+		Accessor.cpp Animation.cpp Material.cpp Mesh.cpp PBR.cpp Reader.cpp ReaderImpl.cpp Scene.cpp Skin.cpp Texture.cpp TinyGLTF.cpp
 		PROPERTIES
 		COMPILE_OPTIONS "-Wno-deprecated-declarations"
 	)

@@ -1,3 +1,13 @@
+#include <osgx/Warnings.hpp>
+
+OSGX_DISABLE_WARNINGS
+
+#define TINYGLTF_NOEXCEPTION
+
+#include "tiny_gltf.h"
+
+OSGX_ENABLE_WARNINGS
+
 #include "osgGLTF/PBR.hpp"
 #include "osgGLTF/Shader.hpp"
 
@@ -15,6 +25,8 @@ OSGX_DISABLE_WARNINGS
 #include <osgDB/ReadFile>
 
 OSGX_ENABLE_WARNINGS
+
+#include <filesystem>
 
 // ================================================================================================
 // osgGLTF::pbr - the glue between osgGLTF's loader material interface
@@ -442,15 +454,19 @@ PBRIBLEnvironment preparePBRIBLEnvironment(
 	environment.envMap = osgx::ibl::loadPrefilterCubemap(ktx2Path);
 	if(!environment.envMap) return environment;
 	environment.envMap->setUseHardwareMipMapGeneration(false);
-	environment.brdfLUT = osgx::make_ref<osg::Texture2D>();
-	environment.lutCamera = osgx::ibl::makeBRDFLUTCamera(lutSize, environment.brdfLUT);
+
+	auto lut = osgx::ibl::sharedBRDFLUT(lutSize);
+
+	environment.brdfLUT = lut.texture;
+	environment.lutCamera = lut.camera; // null once another environment already baked this size
+
 	auto hdrImage = osgDB::readRefImageFile(hdrPath);
 	if(!hdrImage) return environment;
 	auto diffuseBake = osgx::ibl::createLambertianBakeScene(hdrImage);
 	environment.diffuseBakeRoot = diffuseBake.root;
 	environment.diffuseEnv = diffuseBake.diffuseTexture;
 	environment.root = osgx::make_ref<osg::Group>();
-	environment.root->addChild(environment.lutCamera);
+	if(environment.lutCamera) environment.root->addChild(environment.lutCamera);
 	environment.root->addChild(environment.diffuseBakeRoot);
 	return environment;
 }
@@ -477,8 +493,10 @@ PBRIBLEnvironment preparePBRIBLEnvironment(const std::string& hdrPath, int lutSi
 
 	if(!hdrImage) return environment;
 
-	environment.brdfLUT = osgx::make_ref<osg::Texture2D>();
-	environment.lutCamera = osgx::ibl::makeBRDFLUTCamera(lutSize, environment.brdfLUT);
+	auto lut = osgx::ibl::sharedBRDFLUT(lutSize);
+
+	environment.brdfLUT = lut.texture;
+	environment.lutCamera = lut.camera; // null once another environment already baked this size
 
 	auto diffuseBake = osgx::ibl::createLambertianBakeScene(hdrImage);
 
@@ -495,11 +513,138 @@ PBRIBLEnvironment preparePBRIBLEnvironment(const std::string& hdrPath, int lutSi
 	environment.envMap = specularBake.prefilterTexture;
 
 	environment.root = osgx::make_ref<osg::Group>();
-	environment.root->addChild(environment.lutCamera);
+	if(environment.lutCamera) environment.root->addChild(environment.lutCamera);
 	environment.root->addChild(environment.diffuseBakeRoot);
 	environment.root->addChild(environment.specularBakeRoot);
 
 	return environment;
+}
+
+namespace {
+
+// `value.Get(key)` asserts IsObject() on the receiver, so every lookup below guards that first --
+// a missing/malformed role (e.g. no "diffuse" object at all) must decode to defaults, not assert.
+std::string decodeString(const tinygltf::Value& value, const char* key) {
+	if(!value.IsObject()) return {};
+
+	const auto& found = value.Get(key);
+
+	return found.IsString() ? found.Get<std::string>() : std::string();
+}
+
+int decodeInt(const tinygltf::Value& value, const char* key, int fallback) {
+	if(!value.IsObject()) return fallback;
+
+	const auto& found = value.Get(key);
+
+	return found.IsInt() ? found.GetNumberAsInt() : fallback;
+}
+
+IBLEnvironmentManifest decodeIBLEnvironment(const tinygltf::Value& entry) {
+	IBLEnvironmentManifest manifest;
+
+	if(!entry.IsObject()) return manifest;
+
+	const auto& specular = entry.Get("specular");
+
+	manifest.specular.uri = decodeString(specular, "uri");
+	manifest.specular.prefilterSize = decodeInt(specular, "prefilterSize", 0);
+	manifest.specular.lowestMipLevel = decodeInt(specular, "lowestMipLevel", 0);
+	manifest.diffuse.uri = decodeString(entry.Get("diffuse"), "uri");
+	manifest.brdfLUT.uri = decodeString(entry.Get("brdfLUT"), "uri");
+
+	return manifest;
+}
+
+}
+
+std::vector<IBLEnvironmentManifest> decodeIBLEnvironments(const tinygltf::Value& extensionValue) {
+	std::vector<IBLEnvironmentManifest> result;
+
+	if(!extensionValue.IsObject()) return result;
+
+	const auto& environments = extensionValue.Get("environments");
+
+	if(!environments.IsArray()) return result;
+
+	for(std::size_t i = 0; i < environments.ArrayLen(); i++) {
+		result.push_back(decodeIBLEnvironment(environments.Get(static_cast<int>(i))));
+	}
+
+	return result;
+}
+
+PBRIBLEnvironment loadPBRIBLEnvironment(const IBLEnvironmentManifest& manifest, const std::string& baseDir) {
+	PBRIBLEnvironment environment;
+
+	if(!manifest.specular.valid() || !manifest.diffuse.valid() || !manifest.brdfLUT.valid()) {
+		OSG_WARN << "osgGLTF::pbr::loadPBRIBLEnvironment: manifest is missing a required resource" << std::endl;
+
+		return environment;
+	}
+
+	const std::filesystem::path base(baseDir);
+
+	// loadPrefilterCubemap() is content-agnostic despite its name -- it just loads a KTX2 as a
+	// TextureCubeMap, which is equally correct for the Lambertian diffuse cube as for GGX specular.
+	environment.envMap = osgx::ibl::loadPrefilterCubemap((base / manifest.specular.uri).string());
+	if(!environment.envMap) return environment;
+
+	environment.diffuseEnv = osgx::ibl::loadPrefilterCubemap((base / manifest.diffuse.uri).string());
+	if(!environment.diffuseEnv) return environment;
+
+	auto lutImage = osgDB::readRefImageFile((base / manifest.brdfLUT.uri).string());
+
+	if(!lutImage) {
+		OSG_WARN << "osgGLTF::pbr::loadPBRIBLEnvironment: failed to load " << manifest.brdfLUT.uri << std::endl;
+
+		return environment;
+	}
+
+	environment.brdfLUT = osgx::make_ref<osg::Texture2D>();
+	environment.brdfLUT->setImage(lutImage);
+	environment.brdfLUT->setFilter(osg::Texture::MIN_FILTER, osg::Texture::LINEAR);
+	environment.brdfLUT->setFilter(osg::Texture::MAG_FILTER, osg::Texture::LINEAR);
+	environment.brdfLUT->setWrap(osg::Texture::WRAP_S, osg::Texture::CLAMP_TO_EDGE);
+	environment.brdfLUT->setWrap(osg::Texture::WRAP_T, osg::Texture::CLAMP_TO_EDGE);
+
+	return environment;
+}
+
+PBRIBLEnvironment loadPBRIBLEnvironment(const std::string& manifestPath) {
+	tinygltf::TinyGLTF loader;
+	tinygltf::Model document;
+	std::string error, warning;
+
+	if(!loader.LoadASCIIFromFile(&document, &error, &warning, manifestPath)) {
+		OSG_WARN << "osgGLTF::pbr::loadPBRIBLEnvironment: failed to load " << manifestPath << ": " << error << std::endl;
+
+		return {};
+	}
+
+	if(!warning.empty()) {
+		OSG_WARN << "osgGLTF::pbr::loadPBRIBLEnvironment: " << manifestPath << ": " << warning << std::endl;
+	}
+
+	const auto it = document.extensions.find("osgx_pbribl");
+
+	if(it == document.extensions.end()) {
+		OSG_WARN << "osgGLTF::pbr::loadPBRIBLEnvironment: " << manifestPath << " has no osgx_pbribl extension" << std::endl;
+
+		return {};
+	}
+
+	auto environments = decodeIBLEnvironments(it->second);
+
+	if(environments.empty()) {
+		OSG_WARN << "osgGLTF::pbr::loadPBRIBLEnvironment: " << manifestPath << " declares no environments" << std::endl;
+
+		return {};
+	}
+
+	const std::string baseDir = std::filesystem::path(manifestPath).parent_path().string();
+
+	return loadPBRIBLEnvironment(environments.front(), baseDir);
 }
 
 PBRIBLScene createPBRIBLScene(
