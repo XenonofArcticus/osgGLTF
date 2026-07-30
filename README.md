@@ -27,11 +27,11 @@ if you want to support GLB loading easily!
 
 ## CMake
 
-A top-level build enables the KTX2 plugin, tools, examples, and installation rules by default.
-Each optional layer can be controlled independently:
+A top-level build enables tools, examples, and installation rules by default. Each optional layer
+can be controlled independently:
 
-- `OSGGLTF_BUILD_KTX2` builds the KTX2 osgDB plugin.
-- `OSGGLTF_BUILD_TOOLS` builds the viewer and CPU/GPU IBL-baking tools.
+- `OSGGLTF_BUILD_TOOLS` builds the viewer and CPU/GPU IBL-baking tools. The KTX2 osgDB plugin
+  itself now lives in `osgx` (`OSGX_BUILD_KTX2`) -- osgGLTF just consumes it via `find_package(osgx)`.
 - `OSGGLTF_BUILD_EXAMPLES` builds the examples.
 - `OSGGLTF_BUILD_PYTHON` builds the Python module.
 - `OSGGLTF_INSTALL` generates osgGLTF installation rules.

@@ -15,9 +15,9 @@ OSGX_DISABLE_WARNINGS
 #define STBI_ONLY_PIC // HDR format uses Radiance RGBE internally
 #include <stb_image.h>
 
-#include <ktx.h>
-
 OSGX_ENABLE_WARNINGS
+
+#include <osgx/ktx2/KTX2.hpp>
 
 #include <algorithm>
 #include <cassert>
@@ -37,11 +37,6 @@ OSGX_ENABLE_WARNINGS
 
 #ifndef M_PI
 # define M_PI 3.14159265358979323846
-#endif
-
-// VK_FORMAT_R16G16B16_SFLOAT
-#ifndef VK_FORMAT_R16G16B16_SFLOAT
-# define VK_FORMAT_R16G16B16_SFLOAT 90
 #endif
 
 // ---------------------------------------------------------------------------
@@ -307,71 +302,34 @@ int main(int argc, char* argv[])
 	stbi_image_free(hdr);
 
 	// ---------------------------------------------------------------------------
-	// Write KTX2 using libktx
+	// Write KTX2 via osgx::ktx2 -- libktx itself is now a private implementation detail of that
+	// plugin; this is the only KTX2-writing path anywhere in this codebase.
 	// ---------------------------------------------------------------------------
 
-	ktxTextureCreateInfo info = {};
-	info.vkFormat = VK_FORMAT_R16G16B16_SFLOAT;
-	info.baseWidth = static_cast<ktx_uint32_t>(prefilterSize);
-	info.baseHeight = static_cast<ktx_uint32_t>(prefilterSize);
-	info.baseDepth = 1;
-	info.numDimensions = 2;
-	info.numLevels = static_cast<ktx_uint32_t>(numMips);
-	info.numLayers = 1;
-	info.numFaces = 6;
-	info.isArray = KTX_FALSE;
-	info.generateMipmaps = KTX_FALSE;
+	auto result = osgx::ktx2::write(
+		static_cast<uint32_t>(prefilterSize),
+		static_cast<uint32_t>(prefilterSize),
+		static_cast<uint32_t>(numMips),
+		6,
+		osgx::ktx2::Format::R16G16B16_SFLOAT,
+		[&](uint32_t mip, uint32_t face) -> osgx::ktx2::ImageSpan {
+			static thread_local std::vector<uint16_t> f16;
 
-	ktxTexture2* ktx = nullptr;
-	KTX_error_code rc = ktxTexture2_Create(&info, KTX_TEXTURE_CREATE_ALLOC_STORAGE, &ktx);
-	if (rc != KTX_SUCCESS) {
-		std::cerr
-			<< "ibl-bake-cpu: ktxTexture2_Create failed (" << static_cast<int>(rc) << ")"
-			<< std::endl;
-		return 1;
-	}
+			int mipSize = std::max(1, prefilterSize >> mip);
+			size_t pixelCount = static_cast<size_t>(mipSize) * static_cast<size_t>(mipSize);
+			const auto& f32 = data[mip][face];
 
-	for (int mip = 0; mip < numMips; ++mip) {
-		int mipSize = std::max(1, prefilterSize >> mip);
-		const size_t mipIndex = static_cast<size_t>(mip);
-		size_t pixelCount = static_cast<size_t>(mipSize) * static_cast<size_t>(mipSize);
-
-		// Convert float32 -> float16 per face
-		std::vector<uint16_t> f16(pixelCount * 3);
-
-		for (int face = 0; face < 6; ++face) {
-			const size_t faceIndex = static_cast<size_t>(face);
-			const auto& f32 = data[mipIndex][faceIndex];
+			f16.resize(pixelCount * 3);
 			for (size_t k = 0; k < pixelCount * 3; ++k)
 				f16[k] = f32_to_f16(f32[k]);
 
-			size_t imageBytes = pixelCount * 3 * sizeof(uint16_t);
-			rc = ktxTexture_SetImageFromMemory(
-				reinterpret_cast<ktxTexture*>(ktx),
-				static_cast<ktx_uint32_t>(mip),
-				0,
-				static_cast<ktx_uint32_t>(face),
-				reinterpret_cast<const ktx_uint8_t*>(f16.data()),
-				imageBytes
-			);
+			return { f16.data(), f16.size() * sizeof(uint16_t) };
+		},
+		outputPath
+	);
 
-			if (rc != KTX_SUCCESS) {
-				std::cerr
-					<< "ibl-bake-cpu: SetImage mip=" << mip << " face=" << face
-					<< " failed (" << static_cast<int>(rc) << ")" << std::endl;
-				ktxTexture_Destroy(reinterpret_cast<ktxTexture*>(ktx));
-				return 1;
-			}
-		}
-	}
-
-	rc = ktxTexture_WriteToNamedFile(reinterpret_cast<ktxTexture*>(ktx), outputPath);
-	ktxTexture_Destroy(reinterpret_cast<ktxTexture*>(ktx));
-
-	if (rc != KTX_SUCCESS) {
-		std::cerr
-			<< "ibl-bake-cpu: write failed (" << static_cast<int>(rc) << "): "
-			<< outputPath << std::endl;
+	if (!result.success()) {
+		std::cerr << "ibl-bake-cpu: write failed: " << outputPath << std::endl;
 		return 1;
 	}
 

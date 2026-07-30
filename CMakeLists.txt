@@ -18,7 +18,6 @@ if(OSG_PYTHON_DIR)
 	set(OSGGLTF_BUILD_PYTHON_DEFAULT ON)
 endif()
 
-option(OSGGLTF_BUILD_KTX2 "Build the KTX2 osgDB plugin" ${OSGGLTF_IS_TOP_LEVEL})
 option(OSGGLTF_BUILD_TOOLS "Build the osgGLTF command-line tools" ${OSGGLTF_IS_TOP_LEVEL})
 option(OSGGLTF_BUILD_EXAMPLES "Build the osgGLTF examples" ${OSGGLTF_IS_TOP_LEVEL})
 option(OSGGLTF_BUILD_PYTHON "Build the osgGLTF Python module" ${OSGGLTF_BUILD_PYTHON_DEFAULT})
@@ -88,25 +87,8 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
 	add_link_options(-Wl,--disable-new-dtags)
 endif()
 
-# ---------------------------------------------------------------------------
-# KTX-Software (ext/KTX-Software submodule)
-# Disable everything we don't need to keep the build fast.
-# ---------------------------------------------------------------------------
-if(OSGGLTF_BUILD_KTX2 OR OSGGLTF_BUILD_TOOLS)
-	set(KTX_FEATURE_STATIC_LIBRARY ON CACHE BOOL "" FORCE)
-	set(KTX_FEATURE_TOOLS OFF CACHE BOOL "" FORCE)
-	set(KTX_FEATURE_TESTS OFF CACHE BOOL "" FORCE)
-	set(KTX_FEATURE_DOC OFF CACHE BOOL "" FORCE)
-	set(KTX_FEATURE_LOADTEST_APPS OFF CACHE BOOL "" FORCE)
-	add_subdirectory("ext/KTX-Software")
-endif()
-
 add_subdirectory("src")
 add_subdirectory("plugins/gltf")
-
-if(OSGGLTF_BUILD_KTX2)
-	add_subdirectory("plugins/ktx2")
-endif()
 
 if(OSGGLTF_BUILD_TOOLS)
 	add_subdirectory("tools")

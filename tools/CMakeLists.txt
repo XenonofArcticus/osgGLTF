@@ -26,7 +26,7 @@ target_link_libraries(osggltf-iblbake-gpu PRIVATE
 )
 target_compile_features(osggltf-iblbake-gpu PRIVATE cxx_std_20)
 
-# CPU-only IBL baker. Uses stb_image, libktx, and OpenMP when available.
+# CPU-only IBL baker. Uses stb_image, osgx::ktx2, and OpenMP when available.
 find_package(OpenMP)
 
 add_executable(osggltf-iblbake-cpu
@@ -36,9 +36,8 @@ add_executable(osggltf-iblbake-cpu
 osggltf_compile_options(osggltf-iblbake-cpu)
 target_include_directories(osggltf-iblbake-cpu PRIVATE
 	${PROJECT_SOURCE_DIR}/ext/tinygltf
-	${PROJECT_SOURCE_DIR}/ext/KTX-Software/lib/include
 )
-target_link_libraries(osggltf-iblbake-cpu PRIVATE ktx)
+target_link_libraries(osggltf-iblbake-cpu PRIVATE osgx::ktx2)
 target_compile_features(osggltf-iblbake-cpu PRIVATE cxx_std_20)
 
 if(OpenMP_CXX_FOUND)
